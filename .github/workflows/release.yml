@@ -1,0 +1,30 @@
+name: Publicar nueva versión (Windows)
+
+# Se dispara al subir una etiqueta de versión (ej. v1.1.0). Construye el
+# instalador de Windows en un runner de GitHub (no hace falta Wine ni una PC
+# con Windows a mano) y lo publica en GitHub Releases — desde ahí es de donde
+# el botón "Buscar actualizaciones" de la app lo descarga en cada PC.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Compilar y publicar en GitHub Releases
+        run: npm run dist:win -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

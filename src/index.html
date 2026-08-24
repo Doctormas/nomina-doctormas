@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: https://ve.dolarapi.com https://*.workers.dev; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://ve.dolarapi.com https://*.workers.dev;">
+<title>Nómina Doctormás</title>
+<link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img class="brand-logo" src="assets/img/logo-doctormas-wordmark-white.png" alt="Doctormás">
+      <div class="sub">Sistema de nómina · LOTTT Venezuela</div>
+    </div>
+    <nav class="sidebar-nav" id="sidebarNav"></nav>
+    <div class="sidebar-footer">
+      <span id="sidebarVersion">v1.0.0 · escritorio</span>
+      <button id="btnConfigGear" class="sidebar-gear" title="Configuración" aria-label="Configuración"></button>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar">
+      <div class="topbar-title" id="topbarTitle">Resumen</div>
+      <div class="topbar-right">
+        <button id="btnGuardarNube" class="btn small hidden" style="display:none;">☁️ Guardar cambios</button>
+        <div class="sub" id="syncHeaderLabel" style="display:none;"></div>
+        <div class="rate-chip" id="tasaHeaderLabel">Tasa: —</div>
+        <div class="pill-toggle" id="currencyToggle">
+          <button data-cur="VES" class="active">Bs.</button>
+          <button data-cur="USD">USD</button>
+        </div>
+        <div class="sub" id="clockLabel"></div>
+      </div>
+    </header>
+    <main class="content" id="mainArea"></main>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
