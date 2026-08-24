@@ -35,7 +35,8 @@
     "publish": {
       "provider": "github",
       "owner": "Doctormas",
-      "repo": "nomina-doctormas"
+      "repo": "nomina-doctormas",
+      "releaseType": "release"
     },
     "files": [
       "electron/**/*",
