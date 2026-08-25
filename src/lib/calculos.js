@@ -7,6 +7,34 @@
 import { state, tasaEnFecha, getTasaActualValor, tipoNominaCfg } from '../state/store.js';
 import { parseDate, todayStr } from './formato.js';
 
+/* ---------- Utilidades de fechas (para prorratear períodos parciales) ---------- */
+function sumarDias(fechaISO, delta) {
+  const d = parseDate(fechaISO);
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+function diasEntreInclusive(desdeISO, hastaISO) {
+  return Math.round((parseDate(hastaISO) - parseDate(desdeISO)) / (1000 * 60 * 60 * 24)) + 1;
+}
+function primerYUltimoDiaMes(fechaISO) {
+  const anoMes = fechaISO.slice(0, 7);
+  const y = Number(fechaISO.slice(0, 4)), m = Number(fechaISO.slice(5, 7));
+  const ultimoDia = new Date(y, m, 0).getDate();
+  return { primero: `${anoMes}-01`, ultimo: `${anoMes}-${String(ultimoDia).padStart(2, '0')}` };
+}
+// Rango "oficial" del período que se muestra en el recibo (independiente de si
+// el empleado ingresó a mitad de período, lo cual ya se aclara aparte con
+// "parcial"): primera quincena = 1 al 15 del mes de la fecha de corte; segunda
+// quincena = 16 al último día de ese mes; pago mensual = 1 al último día.
+export function periodoNominal(tipoKey, fechaPeriodoISO) {
+  const { primero, ultimo } = primerYUltimoDiaMes(fechaPeriodoISO);
+  if (tipoKey === 'primera') return { desde: primero, hasta: `${fechaPeriodoISO.slice(0, 7)}-15` };
+  if (tipoKey === 'segunda') return { desde: `${fechaPeriodoISO.slice(0, 7)}-16`, hasta: ultimo };
+  if (tipoKey === 'mensual') return { desde: primero, hasta: ultimo };
+  const cfg = tipoNominaCfg(tipoKey);
+  return { desde: sumarDias(fechaPeriodoISO, -(cfg.diasSueldo - 1)), hasta: fechaPeriodoISO };
+}
+
 /* ---------- Cálculo de antigüedad ---------- */
 export function antiguedad(fechaIngreso, fechaRef) {
   const ing = parseDate(fechaIngreso);
@@ -241,70 +269,60 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const cfg = tipoNominaCfg(tipoKey);
   const salarioMensual = salarioVigente(emp, fechaPeriodoISO);
   const salarioDiario = salarioMensual / 30;
-  const diasPeriodo = cfg.diasSueldo;
-  const salarioMesCompleto = salarioDiario * 30;
+  const diasConfigurados = cfg.diasSueldo;
   const cestaticketPeriodo = cfg.incluyeCestaticket ? cestaticketEmp(emp, fechaPeriodoISO) : 0;
 
-  // Si este tipo de nómina "cierra" el mes (trae las deducciones) pero no paga
-  // los 30 días de una vez, es porque ya se adelantó el resto en otro tipo de
-  // nómina sin deducciones (ej. primera quincena) — el salario de este recibo
-  // es el mes completo MENOS ese anticipo, no solo "los días configurados",
-  // para que cuadre exacto aunque el sueldo haya cambiado a mitad de mes o el
-  // anticipo real no haya sido de los mismos días que dice Configuración.
-  let salarioNormalPeriodo = salarioDiario * diasPeriodo;
-  let anticipo = null;
-  if (cfg.incluyeDeducciones && diasPeriodo < 30) {
-    const mesISO = fechaPeriodoISO.slice(0, 7);
-    const anticiposDelMes = state.PERIODOS.filter((p) =>
-      p.empId === emp.id && p.fecha.slice(0, 7) === mesISO && !tipoNominaCfg(p.tipoPeriodo).incluyeDeducciones);
-    if (anticiposDelMes.length) {
-      const monto = anticiposDelMes.reduce((a, p) => a + p.resultado.totalDevengado, 0);
-      const dias = anticiposDelMes.reduce((a, p) => a + p.resultado.diasPeriodo, 0);
-      anticipo = { monto, dias, real: true };
-    } else {
-      const otroTipo = Object.entries(state.CONFIG.tiposNomina).find(([, v]) => !v.incluyeDeducciones);
-      const dias = otroTipo ? otroTipo[1].diasSueldo : (30 - diasPeriodo);
-      anticipo = { monto: salarioDiario * dias, dias, real: false };
-    }
-    salarioNormalPeriodo = salarioMesCompleto - anticipo.monto;
-  }
+  // Si el empleado ingresó a mitad de este período (o, para el primer mes de
+  // Doctormás, la empresa misma empezó a mitad de mes — 17/04/2023), no se
+  // paga como si hubiera trabajado el período completo: se prorratea a los
+  // días reales trabajados dentro de este período (quincena o mes).
+  const inicioVentanaPeriodo = sumarDias(fechaPeriodoISO, -(diasConfigurados - 1));
+  const inicioRealPeriodo = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaPeriodo ? emp.fechaIngreso : inicioVentanaPeriodo;
+  const diasPeriodo = Math.min(diasEntreInclusive(inicioRealPeriodo, fechaPeriodoISO), diasConfigurados);
+
+  const salarioNormalPeriodo = salarioDiario * diasPeriodo;
 
   const ant = antiguedad(emp.fechaIngreso, fechaPeriodoISO);
   const si = salarioIntegralDiario(salarioMensual, ant.anoServicioActual, diasUtilidadesEmp(emp));
 
+  // Cada tipo de nómina se calcula únicamente con lo que ese recibo paga: una
+  // quincena se calcula con sus 15 días (o menos si ingresó a mitad), un pago
+  // mensual con sus 30 — no se acumula el mes completo de otro recibo ni se
+  // resta ningún anticipo. Todo, incluyendo el tope y la base mínima de la
+  // Ley DPP, se prorratea a la fracción del mes que representan estos días.
   let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0, dppPatrono = 0, dppBaseMinimaAplicada = false;
   if (cfg.incluyeDeducciones) {
-    const topeMensual = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos;
-    const baseCotizable = Math.min(salarioMensual, topeMensual);
-    const salarioIntegralMensual = si.integral * 30;
-    const salarioNormalMensual = salarioDiario * 30;
+    const fraccionMes = diasPeriodo / 30;
+    const topePeriodo = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
+    const baseCotizable = Math.min(salarioNormalPeriodo, topePeriodo);
+    const salarioIntegralPeriodo = si.integral * diasPeriodo;
     // Base de la Ley de Protección de las Pensiones (DPP, recaudada por el SENIAT):
-    // total de pagos de nómina del mes — salario + bono de alimentación — con un
-    // MÍNIMO por trabajador (Art. 7 Ley DPP): si lo real es menor a ese mínimo, el
-    // aporte de esa persona igual se calcula sobre el mínimo, no sobre lo real.
-    const cestaticketMensual = cestaticketEmp(emp, fechaPeriodoISO);
-    const baseNominaMensualReal = salarioNormalMensual + cestaticketMensual;
-    const dppBaseMinimaBs = state.CONFIG.dppBaseMinimaMoneda === 'USD'
+    // total de pagos de nómina de este período — salario + bono de alimentación —
+    // con un MÍNIMO por trabajador (Art. 7 Ley DPP), prorrateado a los días de
+    // este período: si lo real es menor a ese mínimo, el aporte de esa persona
+    // igual se calcula sobre el mínimo, no sobre lo real.
+    const baseNominaPeriodoReal = salarioNormalPeriodo + cestaticketPeriodo;
+    const dppBaseMinimaBs = (state.CONFIG.dppBaseMinimaMoneda === 'USD'
       ? state.CONFIG.dppBaseMinima * tasaEnFecha(fechaPeriodoISO)
-      : state.CONFIG.dppBaseMinima;
-    const baseNominaMensualTotal = Math.max(baseNominaMensualReal, dppBaseMinimaBs);
-    dppBaseMinimaAplicada = baseNominaMensualReal < dppBaseMinimaBs;
+      : state.CONFIG.dppBaseMinima) * fraccionMes;
+    const baseNominaPeriodoTotal = Math.max(baseNominaPeriodoReal, dppBaseMinimaBs);
+    dppBaseMinimaAplicada = baseNominaPeriodoReal < dppBaseMinimaBs;
 
     ivssTrab = baseCotizable * (state.CONFIG.ivssTrabajador / 100);
     rpeTrab = baseCotizable * (state.CONFIG.rpeTrabajador / 100);
-    faovTrab = salarioIntegralMensual * (state.CONFIG.faovTrabajador / 100);
+    faovTrab = salarioIntegralPeriodo * (state.CONFIG.faovTrabajador / 100);
 
     ivssPatrono = baseCotizable * (state.CONFIG.ivssPatrono / 100);
-    faovPatrono = salarioIntegralMensual * (state.CONFIG.faovPatrono / 100);
+    faovPatrono = salarioIntegralPeriodo * (state.CONFIG.faovPatrono / 100);
     rpePatrono = baseCotizable * (state.CONFIG.rpePatrono / 100);
-    incesPatrono = salarioNormalMensual * (state.CONFIG.incesPatrono / 100);
-    dppPatrono = baseNominaMensualTotal * (state.CONFIG.dppPatrono / 100);
+    incesPatrono = salarioNormalPeriodo * (state.CONFIG.incesPatrono / 100);
+    dppPatrono = baseNominaPeriodoTotal * (state.CONFIG.dppPatrono / 100);
 
     // ISLR (impuesto sobre la renta): % propio de cada empleado, determinado con el
     // formulario AR-I (declaración anual del trabajador). No hay un % general porque
     // depende de los ingresos y desgravámenes que cada quien declaró — se fija en su
-    // ficha (Empleados) y aquí solo se aplica sobre el salario normal mensual.
-    islrTrab = salarioNormalMensual * (islrPorcentajeEmp(emp) / 100);
+    // ficha (Empleados) y aquí solo se aplica sobre el salario normal de este período.
+    islrTrab = salarioNormalPeriodo * (islrPorcentajeEmp(emp) / 100);
   }
 
   const totalDeducciones = ivssTrab + rpeTrab + faovTrab + islrTrab;
@@ -313,10 +331,12 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
 
   const tasaBCV = tasaEnFecha(fechaPeriodoISO);
   const usaTasaUSD = emp.monedaSalario === 'USD' || (cfg.incluyeCestaticket && cestaticketMonedaEmp(emp) === 'USD');
+  const { desde: periodoDesde, hasta: periodoHasta } = periodoNominal(tipoKey, fechaPeriodoISO);
 
   return {
     salarioMensual, salarioDiario, salarioNormalPeriodo, cestaticketPeriodo, diasPeriodo,
-    salarioMesCompleto, anticipo, diasPagados: anticipo ? (30 - anticipo.dias) : diasPeriodo,
+    periodoParcial: diasPeriodo < diasConfigurados,
+    periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
     ivssTrab, rpeTrab, faovTrab, islrTrab, totalDeducciones, totalDevengado, neto,
     ivssPatrono, faovPatrono, rpePatrono, incesPatrono, dppPatrono, dppBaseMinimaAplicada,

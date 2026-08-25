@@ -38,7 +38,7 @@ function defaultConfig() {
     diasAdicionalTope: 30,
     diasRetroactivoPorAno: 30,    // Art. 142 lit. c LOTTT (cálculo de garantía retroactiva al término)
     tasaInteresAnual: 20,         // % anual estimado (BCV promedio activa/pasiva) — editable por el usuario
-    nombreEmpresa: 'Centro de Atención Médica Inmediata de Salud, C.A. (CAMIS)',
+    nombreEmpresa: 'Centro de Atención Médica Inmediata de Salud CAMIS, C.A.',
     rif: 'J-502185640',
     tiposNomina: {
       primera: {
@@ -63,6 +63,14 @@ function defaultConfig() {
   };
 }
 
+// Corrige el nombre de la empresa si quedó guardado con el nombre viejo
+// (antes de que se corrigiera el orden correcto de "CAMIS, C.A.").
+function corregirNombreEmpresa() {
+  if (state.CONFIG.nombreEmpresa === 'Centro de Atención Médica Inmediata de Salud, C.A. (CAMIS)') {
+    state.CONFIG.nombreEmpresa = 'Centro de Atención Médica Inmediata de Salud CAMIS, C.A.';
+  }
+}
+
 export function tipoNominaCfg(tipoKey) {
   return (state.CONFIG.tiposNomina && state.CONFIG.tiposNomina[tipoKey]) ||
     { label: tipoKey, diasSueldo: 15, incluyeCestaticket: true, incluyeDeducciones: true };
@@ -84,6 +92,10 @@ export const state = {
   LIQUIDACIONES: [],
   HISTORICO_TASAS: [],
   BONO_VAC_PAGADO: [],
+  // Correlativo único para el "N° de recibo" de todo recibo de pago que se
+  // guarda en el historial (nómina, utilidades, bono vacacional) — nunca se
+  // reutiliza ni se reinicia, aunque se borre un registro después.
+  PROXIMO_NUMERO_RECIBO: 1,
   TASA: { valor: null, fuente: null, fechaActualizacion: null, manual: false, timestampCache: 0, fuentes: [] },
   SYNC: { url: '', pin: '', actor: '', lastSyncedAt: null, lastUpdatedBy: null, status: 'sin-configurar' },
   DISPLAY_CURRENCY: 'VES',
@@ -99,6 +111,7 @@ export const state = {
 export async function loadState() {
   const data = await window.api.store.load();
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
+  corregirNombreEmpresa();
   state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
@@ -110,6 +123,7 @@ export async function loadState() {
   state.LIQUIDACIONES = data.LIQUIDACIONES || [];
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+  state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
   if (data.TASA) state.TASA = Object.assign(state.TASA, data.TASA);
   if (state.TASA.fuentes && state.TASA.fuentes.length) {
     state.TASA.fuentes = state.TASA.fuentes.filter((f) => f.fuente !== 'paralelo');
@@ -128,9 +142,20 @@ function collectStorageDoc() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, TASA: state.TASA, SYNC: state.SYNC,
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
+    TASA: state.TASA, SYNC: state.SYNC,
     DISPLAY_CURRENCY: state.DISPLAY_CURRENCY
   };
+}
+
+/** Asigna y devuelve el siguiente N° de recibo: correlativo simple (1, 2, 3…),
+ * creciente y nunca se repite. Se llama una sola vez por recibo, en el
+ * momento de guardarlo en el historial — no al calcularlo/previsualizarlo,
+ * para no gastar números con corridas que nunca se confirman. */
+export function tomarNumeroRecibo() {
+  const n = state.PROXIMO_NUMERO_RECIBO || 1;
+  state.PROXIMO_NUMERO_RECIBO = n + 1;
+  return String(n);
 }
 
 export async function persistAll() {
@@ -146,7 +171,7 @@ export function collectFullState() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
   };
 }
 
@@ -154,6 +179,7 @@ export async function applyFullState(data) {
   if (!data) return;
   state.APPLYING_REMOTE = true;
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
+  corregirNombreEmpresa();
   state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
@@ -165,6 +191,9 @@ export async function applyFullState(data) {
   state.LIQUIDACIONES = data.LIQUIDACIONES || [];
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+  // El mayor entre lo local y lo remoto — nunca retrocede el correlativo,
+  // aunque el otro equipo no lo haya subido en esta sincronización.
+  state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);
   await persistAll();
   state.APPLYING_REMOTE = false;
 }

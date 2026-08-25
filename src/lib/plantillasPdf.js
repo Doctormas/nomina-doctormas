@@ -7,6 +7,34 @@ import { fmt } from './moneda.js';
 import { fmtDate, fmtNum } from './formato.js';
 import { tasaEnFecha } from '../state/store.js';
 import { logoHeaderHTML } from './logo.js';
+import { periodoNominal } from './calculos.js';
+
+// Formato DD-MM-AAAA (con guiones) para el rango "desde/hasta" del período —
+// distinto de fmtDate (que usa "/") para que se lea claro como un rango.
+function fmtDateGuion(s) {
+  if (!s) return '—';
+  return s.slice(8, 10) + '-' + s.slice(5, 7) + '-' + s.slice(0, 4);
+}
+
+// Franja con los datos del trabajador (cédula, cargo, departamento, sueldo
+// mensual) y el N° de recibo — se repite en todo tipo de recibo individual.
+// El número solo existe una vez que el recibo quedó guardado en el histórico
+// (se asigna con tomarNumeroRecibo() al guardar); en una vista previa aún no
+// guardada se muestra "(pendiente de guardar)".
+function datosTrabajadorHTML(emp, fecha, sueldoMensual, numeroRecibo) {
+  return `
+    <table style="width:100%;margin:2px 0 10px;table-layout:fixed;">
+      <tr>
+        <td style="width:62%;padding:0;vertical-align:top;">
+          <div class="legal">Cédula: ${emp.cedula || '—'} · Cargo: ${emp.cargo || '—'} · Departamento: ${emp.departamento || '—'}</div>
+          <div class="legal">Sueldo mensual: ${fmt(sueldoMensual, fecha)}</div>
+        </td>
+        <td style="width:38%;padding:0;text-align:right;vertical-align:top;">
+          <div class="legal"><b>N° de recibo: ${numeroRecibo || '(pendiente de guardar)'}</b></div>
+        </td>
+      </tr>
+    </table>`;
+}
 
 const FIRMA_HTML = (empresa) => `
   <table style="width:100%;margin-top:80px;table-layout:fixed;page-break-inside:avoid;break-inside:avoid;">
@@ -20,27 +48,25 @@ const FIRMA_HTML = (empresa) => `
     </tr>
   </table>`;
 
-export function reciboContentHTML(emp, fecha, r) {
+export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
   return `
     <div class="recibo-compacto">
       ${logoHeaderHTML()}
-      <h2 style="margin:0 0 2px;font-size:1.25rem;">Recibo de pago — ${emp.nombre}</h2>
-      <div class="desc" style="margin-bottom:2px;">${empresaConRif()} · ${r.tipoLabel} · fecha de corte ${fmtDate(fecha)}</div>
+      <h2 style="margin:0 0 4px;font-size:1.25rem;">Recibo de pago</h2>
+      <div style="font-weight:600;margin-bottom:2px;">${emp.nombre}</div>
+      <div class="desc" style="margin-bottom:2px;">${empresaConRif()}</div>
+      <div class="desc" style="margin-bottom:2px;">Fecha de corte ${fmtDate(fecha)}</div>
+      ${r.periodoDesde ? `<div class="desc" style="margin-bottom:6px;">Periodo: &nbsp; Desde ${fmtDateGuion(r.periodoDesde)}<span style="display:inline-block;width:48px;"></span>Hasta ${fmtDateGuion(r.periodoHasta)}</div>` : ''}
+      ${datosTrabajadorHTML(emp, fecha, r.salarioMensual, numeroRecibo)}
       ${r.usaTasaUSD ? `<div class="legal" style="margin-bottom:6px;">Tasa BCV aplicada (fecha de corte): ${fmtNum(r.tasaBCV, 2)} Bs./USD</div>` : ''}
       <table style="margin-top:6px;">
         <thead><tr><th>Devengado</th><th>Salario diario</th><th>Días</th><th>Total</th></tr></thead>
         <tbody>
-          ${r.anticipo ? `
-            <tr><td>Salario del mes completo</td><td>${fmt(r.salarioDiario, fecha)}</td><td>30</td><td>${fmt(r.salarioMesCompleto, fecha)}</td></tr>
-            <tr><td>(–) Anticipo ${r.anticipo.real ? 'ya pagado' : 'estimado (sin corrida guardada ese mes)'}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>-${fmtNum(r.anticipo.dias, 0)}</td><td>-${fmt(r.anticipo.monto, fecha)}</td></tr>
-          ` : `
-            <tr><td>Salario del período</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
-          `}
+          <tr><td>Salario del período${r.periodoParcial ? ' (parcial — ingresó a mitad del período)' : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
           <tr><td>Bono de alimentación (no salarial)</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
           <tr><td><b>Total devengado</b></td><td></td><td></td><td><b>${fmt(r.totalDevengado, fecha)}</b></td></tr>
         </tbody>
       </table>
-      ${r.anticipo && !r.anticipo.real ? '<div class="legal" style="margin-top:4px;">No se encontró una corrida de anticipo guardada para este empleado en este mes — el anticipo se estimó con los días configurados para el otro tipo de nómina. Verifique antes de pagar.</div>' : ''}
       <table style="margin-top:14px;">
         <thead><tr><th colspan="2">Deducciones al trabajador</th></tr></thead>
         <tbody>
@@ -67,13 +93,14 @@ export function reciboContentHTML(emp, fecha, r) {
     </div>`;
 }
 
-export function utilidadesReciboHTML(emp, fecha, r) {
+export function utilidadesReciboHTML(emp, fecha, r, numeroRecibo) {
   const ano = fecha.slice(0, 4);
   return `
     <div class="recibo-compacto">
       ${logoHeaderHTML()}
       <h2 style="margin:0 0 2px;font-size:1.25rem;">Recibo de utilidades — ${emp.nombre}</h2>
-      <div class="desc" style="margin-bottom:8px;">${empresaConRif()} · Utilidades ${ano} · fecha de corte ${fmtDate(fecha)}</div>
+      <div class="desc" style="margin-bottom:2px;">${empresaConRif()} · Utilidades ${ano} · fecha de corte ${fmtDate(fecha)}</div>
+      ${datosTrabajadorHTML(emp, fecha, r.salarioDiario * 30, numeroRecibo)}
       <table>
         <tbody>
           <tr><td>Meses trabajados en el año</td><td>${r.meses}</td></tr>
@@ -89,12 +116,13 @@ export function utilidadesReciboHTML(emp, fecha, r) {
     </div>`;
 }
 
-export function bonoVacacionalReciboHTML(emp, anoServicio, fecha, r) {
+export function bonoVacacionalReciboHTML(emp, anoServicio, fecha, r, numeroRecibo) {
   return `
     <div class="recibo-compacto">
       ${logoHeaderHTML()}
       <h2 style="margin:0 0 2px;font-size:1.25rem;">Recibo de bono vacacional — ${emp.nombre}</h2>
-      <div class="desc" style="margin-bottom:8px;">${empresaConRif()} · Año de servicio ${anoServicio} · fecha de pago ${fmtDate(fecha)}</div>
+      <div class="desc" style="margin-bottom:2px;">${empresaConRif()} · Año de servicio ${anoServicio} · fecha de pago ${fmtDate(fecha)}</div>
+      ${datosTrabajadorHTML(emp, fecha, r.salarioDiario * 30, numeroRecibo)}
       <table>
         <tbody>
           <tr><td>Días de bono vacacional correspondientes</td><td>${r.dias}</td></tr>
@@ -131,12 +159,15 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
     };
   }
   const filasHtml = filas.map(({ emp, r }) => `<tr>
-    <td>${emp ? emp.nombre : '—'}${r.usaTasaUSD ? ' <span class="tag warn">USD</span>' : ''}</td><td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
+    <td>${emp ? emp.nombre : '—'}${r.usaTasaUSD ? ' <span class="tag warn">USD</span>' : ''}</td>
+    <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
+    <td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
     <td><b>${fmt(r.neto, fecha)}</b></td><td>${fmt(r.aportesPatronales, fecha)}</td>
   </tr>`).join('');
+  const { desde, hasta } = periodoNominal(tipoPeriodo, fecha);
   return {
-    subtitulo: `${tipoNominaCfg(tipoPeriodo).label} · Fecha de corte: ${fmtDate(fecha)} · ${filas.length} empleados`,
-    encabezados: ['Empleado', 'Cargo', 'Devengado', 'Deducciones', 'Neto', 'Aportes patronales'],
+    subtitulo: `${tipoNominaCfg(tipoPeriodo).label} · desde ${fmtDateGuion(desde)} hasta ${fmtDateGuion(hasta)} · Fecha de corte: ${fmtDate(fecha)} · ${filas.length} empleados`,
+    encabezados: ['Empleado', 'Fecha de ingreso', 'Cargo', 'Devengado', 'Deducciones', 'Neto', 'Aportes patronales'],
     filasHtml
   };
 }
@@ -175,9 +206,9 @@ export function construirRecibosCorridaHTML(fecha, filas, kind) {
     const { emp, r } = fila;
     if (!emp) return;
     const salto = i === 0 ? '' : 'page-break-before:always;break-before:page;';
-    const contenido = kind === 'utilidades' ? utilidadesReciboHTML(emp, fecha, r)
-      : kind === 'bonovacacional' ? bonoVacacionalReciboHTML(emp, fila.anoServicio, fecha, r)
-      : reciboContentHTML(emp, fecha, r);
+    const contenido = kind === 'utilidades' ? utilidadesReciboHTML(emp, fecha, r, fila.numeroRecibo)
+      : kind === 'bonovacacional' ? bonoVacacionalReciboHTML(emp, fila.anoServicio, fecha, r, fila.numeroRecibo)
+      : reciboContentHTML(emp, fecha, r, fila.numeroRecibo);
     html += `<div style="${salto}padding-top:1px;">${contenido}</div>`;
   });
   return html;

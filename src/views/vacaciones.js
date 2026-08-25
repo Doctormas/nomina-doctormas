@@ -94,7 +94,7 @@ function individualHTML() {
       <div class="field"><label>Total de días a disfrutar</label><input type="number" id="vacDisfDias" value="15"></div>
       <div class="field"><label>Fecha de inicio del disfrute</label><input type="date" id="vacDisfFecha" value="${todayStr()}"></div>
     </div>
-    <button class="btn" id="btnRegistrarVac" style="margin-top:10px;">Registrar</button>
+    <button class="btn" id="btnRegistrarVac" style="margin-top:10px;">Calcular</button>
     <div id="vacDisfResultado"></div>
   </div>
   <div class="card">
@@ -160,7 +160,7 @@ function wire(root, rerender) {
   if (vacEmpSel) { vacEmpSel.addEventListener('change', renderVacResultado); renderVacResultado(); }
 
   const btnRegistrarVac = root.querySelector('#btnRegistrarVac');
-  if (btnRegistrarVac) btnRegistrarVac.addEventListener('click', async () => {
+  if (btnRegistrarVac) btnRegistrarVac.addEventListener('click', () => {
     const empId = root.querySelector('#vacDisfEmp').value;
     if (!empId) { toast('Seleccione un empleado.', 'error'); return; }
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
@@ -168,32 +168,41 @@ function wire(root, rerender) {
     const fecha = root.querySelector('#vacDisfFecha').value;
     if (!diasTotales) { toast('Ingrese cuántos días se toma.', 'error'); return; }
 
+    // Calcular es solo una vista previa — todavía no se guarda nada. El
+    // registro real ocurre al hacer clic en "Confirmar registro" abajo,
+    // igual que una corrida de nómina: primero se revisa, después se confirma.
     const { asignaciones, permisoDias, avisos } = planificarDisfrute(emp, diasTotales, fecha);
-    if (avisos.length) {
-      const ok = await confirmDialog({
-        title: 'Revisar antes de registrar',
-        message: avisos.join('<br><br>') + '<br><br>¿Registrar de todas formas?',
-        confirmLabel: 'Registrar igual', danger: false
-      });
-      if (!ok) return;
-    }
-
-    asignaciones.forEach(({ anoServicio, dias }) => {
-      state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha });
-    });
-    if (permisoDias > 0) {
-      state.PERMISOS_REMUNERADOS.push({ id: uid(), empId, dias: permisoDias, fecha });
-    }
-    await persistAll();
     const filasReparto = asignaciones.map((a) => [`Año de servicio ${a.anoServicio}`, `${a.dias} días`]);
     if (permisoDias > 0) filasReparto.push(['Permiso remunerado (no descuenta ningún año)', `${permisoDias} días`]);
     const contenidoHtml = comprobante(`${empresaConRif()} — Comprobante de disfrute de vacaciones`, [
       ['Empleado', emp.nombre], ['Fecha de inicio', fmtDate(fecha)], ['Total de días', diasTotales], ...filasReparto
-    ]);
+    ]) + (avisos.length ? `<div class="note" style="margin-top:10px;">${avisos.join('<br><br>')}</div>` : '');
+
     const cont = root.querySelector('#vacDisfResultado');
     cont.innerHTML = '';
-    cont.appendChild(resultadoConAcciones({ contenidoHtml, filename: `vacaciones-${(emp.nombre || 'empleado').replace(/\s+/g, '-')}-${fecha}.pdf`, pdfTitle: 'Comprobante de vacaciones' }));
-    renderVacResultado();
+    cont.appendChild(resultadoConAcciones({
+      contenidoHtml, filename: `vacaciones-${(emp.nombre || 'empleado').replace(/\s+/g, '-')}-${fecha}.pdf`, pdfTitle: 'Comprobante de vacaciones',
+      guardarLabel: 'Confirmar registro',
+      onGuardar: async () => {
+        if (avisos.length) {
+          const ok = await confirmDialog({
+            title: 'Revisar antes de registrar',
+            message: avisos.join('<br><br>') + '<br><br>¿Registrar de todas formas?',
+            confirmLabel: 'Registrar igual', danger: false
+          });
+          if (!ok) return;
+        }
+        asignaciones.forEach(({ anoServicio, dias }) => {
+          state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha });
+        });
+        if (permisoDias > 0) {
+          state.PERMISOS_REMUNERADOS.push({ id: uid(), empId, dias: permisoDias, fecha });
+        }
+        await persistAll();
+        toast('Disfrute de vacaciones registrado en el historial.', 'success');
+        rerender();
+      }
+    }));
   });
 
   const btnCargarVacColectivas = root.querySelector('#btnCargarVacColectivas');

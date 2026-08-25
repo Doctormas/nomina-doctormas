@@ -1,4 +1,4 @@
-import { state, persistAll, tipoNominaCfg } from '../state/store.js';
+import { state, persistAll, tipoNominaCfg, tomarNumeroRecibo } from '../state/store.js';
 import { generarCorridaNomina, TIPOS_NOMINA_ESPECIALES, departamentosEmpleados } from '../lib/calculos.js';
 import { construirResumenCorridaHTML, construirRecibosCorridaHTML } from '../lib/plantillasPdf.js';
 import { construirInformeNominaHTML, construirInformeUtilidadesHTML, informeConAcciones } from '../lib/informes.js';
@@ -23,19 +23,19 @@ function corridasGuardadas() {
     const key = 'nomina|' + p.tipoPeriodo + '|' + p.fecha;
     if (!map.has(key)) map.set(key, { kind: 'nomina', tipoPeriodo: p.tipoPeriodo, fecha: p.fecha, filas: [] });
     const emp = state.EMPLEADOS.find((e) => e.id === p.empId);
-    map.get(key).filas.push({ emp, r: p.resultado });
+    map.get(key).filas.push({ emp, r: p.resultado, numeroRecibo: p.numeroRecibo });
   });
   state.UTILIDADES_PAGADAS.forEach((u) => {
     const key = 'utilidades|utilidades|' + u.fecha;
     if (!map.has(key)) map.set(key, { kind: 'utilidades', tipoPeriodo: 'utilidades', fecha: u.fecha, filas: [] });
     const emp = state.EMPLEADOS.find((e) => e.id === u.empId);
-    map.get(key).filas.push({ emp, r: u.resultado });
+    map.get(key).filas.push({ emp, r: u.resultado, numeroRecibo: u.numeroRecibo });
   });
   state.BONO_VAC_PAGADO.forEach((b) => {
     const key = 'bonovacacional|bonovacacional|' + b.fecha;
     if (!map.has(key)) map.set(key, { kind: 'bonovacacional', tipoPeriodo: 'bonovacacional', fecha: b.fecha, filas: [] });
     const emp = state.EMPLEADOS.find((e) => e.id === b.empId);
-    map.get(key).filas.push({ emp, anoServicio: b.anoServicio, r: { dias: b.dias, salarioDiario: b.dias ? b.monto / b.dias : 0, monto: b.monto } });
+    map.get(key).filas.push({ emp, anoServicio: b.anoServicio, r: { dias: b.dias, salarioDiario: b.dias ? b.monto / b.dias : 0, monto: b.monto }, numeroRecibo: b.numeroRecibo });
   });
   return Array.from(map.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
 }
@@ -158,14 +158,14 @@ function wire(root, rerender) {
       onGuardar: async () => {
         if (kind === 'nomina') {
           filas.forEach(({ emp, r }) => {
-            state.PERIODOS.push({ id: uid(), empId: emp.id, tipoPeriodo: tipo, fecha, resultado: r });
+            state.PERIODOS.push({ id: uid(), empId: emp.id, tipoPeriodo: tipo, fecha, resultado: r, numeroRecibo: tomarNumeroRecibo() });
           });
           await persistAll();
           toast(`Corrida guardada: ${filas.length} recibos agregados al historial.`, 'success');
         } else if (kind === 'utilidades') {
           const ano = Number(fecha.slice(0, 4));
           filas.forEach(({ emp, r }) => {
-            state.UTILIDADES_PAGADAS.push({ id: uid(), empId: emp.id, ano, fecha, resultado: r });
+            state.UTILIDADES_PAGADAS.push({ id: uid(), empId: emp.id, ano, fecha, resultado: r, numeroRecibo: tomarNumeroRecibo() });
           });
           await persistAll();
           toast(`Utilidades guardadas: ${filas.length} pagos agregados al historial.`, 'success');
@@ -173,7 +173,7 @@ function wire(root, rerender) {
           let omitidos = 0;
           filas.forEach(({ emp, anoServicio, r }) => {
             if (r.yaPagado) { omitidos++; return; }
-            state.BONO_VAC_PAGADO.push({ id: uid(), empId: emp.id, anoServicio, dias: r.dias, fecha, monto: r.monto });
+            state.BONO_VAC_PAGADO.push({ id: uid(), empId: emp.id, anoServicio, dias: r.dias, fecha, monto: r.monto, numeroRecibo: tomarNumeroRecibo() });
           });
           await persistAll();
           toast(`Bono vacacional guardado: ${filas.length - omitidos} pagos agregados${omitidos ? ` (${omitidos} omitidos por ya estar pagados)` : ''}.`, 'success');
