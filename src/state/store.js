@@ -92,6 +92,7 @@ export const state = {
   LIQUIDACIONES: [],
   HISTORICO_TASAS: [],
   BONO_VAC_PAGADO: [],
+  BONO_ALIM_PAGADO: [],
   // Correlativo único para el "N° de recibo" de todo recibo de pago que se
   // guarda en el historial (nómina, utilidades, bono vacacional) — nunca se
   // reutiliza ni se reinicia, aunque se borre un registro después.
@@ -123,6 +124,7 @@ export async function loadState() {
   state.LIQUIDACIONES = data.LIQUIDACIONES || [];
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+  state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
   if (data.TASA) state.TASA = Object.assign(state.TASA, data.TASA);
   if (state.TASA.fuentes && state.TASA.fuentes.length) {
@@ -142,7 +144,7 @@ function collectStorageDoc() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC,
     DISPLAY_CURRENCY: state.DISPLAY_CURRENCY
   };
@@ -171,7 +173,7 @@ export function collectFullState() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
   };
 }
 
@@ -191,6 +193,7 @@ export async function applyFullState(data) {
   state.LIQUIDACIONES = data.LIQUIDACIONES || [];
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+  state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
   // El mayor entre lo local y lo remoto — nunca retrocede el correlativo,
   // aunque el otro equipo no lo haya subido en esta sincronización.
   state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);

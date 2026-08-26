@@ -270,7 +270,11 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const salarioMensual = salarioVigente(emp, fechaPeriodoISO);
   const salarioDiario = salarioMensual / 30;
   const diasConfigurados = cfg.diasSueldo;
-  const cestaticketPeriodo = cfg.incluyeCestaticket ? cestaticketEmp(emp, fechaPeriodoISO) : 0;
+  // Si ya se le pagó el bono de alimentación de este mes en su propia corrida
+  // (tipo de nómina "Bono de alimentación"), esta nómina normal no lo incluye
+  // de nuevo — se paga una sola vez por mes.
+  const bonoAlimPagadoAparte = bonoAlimentacionYaPagadoEnMes(emp.id, fechaPeriodoISO);
+  const cestaticketPeriodo = (cfg.incluyeCestaticket && !bonoAlimPagadoAparte) ? cestaticketEmp(emp, fechaPeriodoISO) : 0;
 
   // Si el empleado ingresó a mitad de este período (o, para el primer mes de
   // Doctormás, la empresa misma empezó a mitad de mes — 17/04/2023), no se
@@ -330,11 +334,12 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const neto = totalDevengado - totalDeducciones;
 
   const tasaBCV = tasaEnFecha(fechaPeriodoISO);
-  const usaTasaUSD = emp.monedaSalario === 'USD' || (cfg.incluyeCestaticket && cestaticketMonedaEmp(emp) === 'USD');
+  const usaTasaUSD = emp.monedaSalario === 'USD' || (cfg.incluyeCestaticket && !bonoAlimPagadoAparte && cestaticketMonedaEmp(emp) === 'USD');
   const { desde: periodoDesde, hasta: periodoHasta } = periodoNominal(tipoKey, fechaPeriodoISO);
 
   return {
     salarioMensual, salarioDiario, salarioNormalPeriodo, cestaticketPeriodo, diasPeriodo,
+    bonoAlimPagadoAparte,
     periodoParcial: diasPeriodo < diasConfigurados,
     periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
@@ -344,14 +349,29 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   };
 }
 
-// Tipos de nómina "especiales": utilidades y bono vacacional son, para efectos
-// de una corrida, otro tipo de nómina más (igual que primera/segunda quincena
-// o mensual) — solo que su fórmula viene de Art. 131 y Art. 192 LOTTT en vez
-// de tiposNomina de Configuración, así que se calculan aparte.
+// Tipos de nómina "especiales": utilidades, bono vacacional y bono de
+// alimentación son, para efectos de una corrida, otro tipo de nómina más
+// (igual que primera/segunda quincena o mensual) — solo que se calculan y se
+// guardan aparte de tiposNomina de Configuración.
 export const TIPOS_NOMINA_ESPECIALES = [
   { id: 'utilidades', label: 'Utilidades (fin de año)' },
-  { id: 'bonovacacional', label: 'Bono vacacional' }
+  { id: 'bonovacacional', label: 'Bono vacacional' },
+  { id: 'bonoalimentacion', label: 'Bono de alimentación' }
 ];
+
+/** ¿Ya se le pagó a este empleado el bono de alimentación de este mes en su
+ * propia corrida? Si es así, la nómina normal (quincena/mensual) de ese mismo
+ * mes no debe volver a incluirlo — se pagó una sola vez, por separado. */
+function bonoAlimentacionYaPagadoEnMes(empId, fechaPeriodoISO) {
+  const mesISO = fechaPeriodoISO.slice(0, 7);
+  return state.BONO_ALIM_PAGADO.some((b) => b.empId === empId && b.fecha.slice(0, 7) === mesISO);
+}
+
+export function calcularBonoAlimentacion(emp, fechaPeriodoISO) {
+  const monto = cestaticketEmp(emp, fechaPeriodoISO);
+  const yaPagado = bonoAlimentacionYaPagadoEnMes(emp.id, fechaPeriodoISO);
+  return { monto, yaPagado };
+}
 
 export function departamentosEmpleados() {
   const set = new Set(state.EMPLEADOS.map((e) => (e.departamento || '').trim()).filter(Boolean));
@@ -370,6 +390,14 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
       neto: a.neto + f.r.montoNeto, aportes: a.aportes
     }), { devengado: 0, deducciones: 0, neto: 0, aportes: 0 });
     return { filas, totales, kind: 'utilidades' };
+  }
+
+  if (tipoPeriodo === 'bonoalimentacion') {
+    const filas = activos.map((emp) => ({ emp, kind: 'bonoalimentacion', r: calcularBonoAlimentacion(emp, fechaPeriodoISO) }));
+    const totales = filas.reduce((a, f) => ({
+      devengado: a.devengado + f.r.monto, deducciones: a.deducciones, neto: a.neto + f.r.monto, aportes: a.aportes
+    }), { devengado: 0, deducciones: 0, neto: 0, aportes: 0 });
+    return { filas, totales, kind: 'bonoalimentacion' };
   }
 
   if (tipoPeriodo === 'bonovacacional') {

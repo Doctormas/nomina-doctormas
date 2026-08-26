@@ -7,7 +7,7 @@ import { fmt } from './moneda.js';
 import { fmtDate, fmtNum } from './formato.js';
 import { tasaEnFecha } from '../state/store.js';
 import { logoHeaderHTML } from './logo.js';
-import { periodoNominal } from './calculos.js';
+import { periodoNominal, salarioVigente } from './calculos.js';
 
 // Formato DD-MM-AAAA (con guiones) para el rango "desde/hasta" del período —
 // distinto de fmtDate (que usa "/") para que se lea claro como un rango.
@@ -63,7 +63,7 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
         <thead><tr><th>Devengado</th><th>Salario diario</th><th>Días</th><th>Total</th></tr></thead>
         <tbody>
           <tr><td>Salario del período${r.periodoParcial ? ' (parcial — ingresó a mitad del período)' : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
-          <tr><td>Bono de alimentación (no salarial)</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
+          <tr><td>Bono de alimentación (no salarial)${r.bonoAlimPagadoAparte ? ' — pagado por separado este mes' : ''}</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
           <tr><td><b>Total devengado</b></td><td></td><td></td><td><b>${fmt(r.totalDevengado, fecha)}</b></td></tr>
         </tbody>
       </table>
@@ -134,6 +134,24 @@ export function bonoVacacionalReciboHTML(emp, anoServicio, fecha, r, numeroRecib
     </div>`;
 }
 
+export function bonoAlimentacionReciboHTML(emp, fecha, r, numeroRecibo) {
+  const mes = fecha.slice(0, 7);
+  return `
+    <div class="recibo-compacto">
+      ${logoHeaderHTML()}
+      <h2 style="margin:0 0 2px;font-size:1.25rem;">Recibo de bono de alimentación — ${emp.nombre}</h2>
+      <div class="desc" style="margin-bottom:2px;">${empresaConRif()} · Mes ${mes} · fecha de pago ${fmtDate(fecha)}</div>
+      ${datosTrabajadorHTML(emp, fecha, salarioVigente(emp, fecha), numeroRecibo)}
+      <table>
+        <tbody>
+          <tr><td>Bono de alimentación del mes (no salarial)</td><td>${fmt(r.monto, fecha)}</td></tr>
+          <tr><td><b>Monto a pagar</b></td><td><b>${fmt(r.monto, fecha)}</b></td></tr>
+        </tbody>
+      </table>
+      ${FIRMA_HTML(empresaConRif())}
+    </div>`;
+}
+
 function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
   if (kind === 'utilidades') {
     const ano = fecha.slice(0, 4);
@@ -158,6 +176,18 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
       filasHtml
     };
   }
+  if (kind === 'bonoalimentacion') {
+    const mes = fecha.slice(0, 7);
+    const filasHtml = filas.map(({ emp, r }) => `<tr>
+      <td>${emp ? emp.nombre : '—'}</td><td>${emp ? (emp.cargo || '—') : '—'}</td>
+      <td><b>${fmt(r.monto, fecha)}</b></td>
+    </tr>`).join('');
+    return {
+      subtitulo: `Bono de alimentación · Mes ${mes} · fecha de pago ${fmtDate(fecha)} · ${filas.length} empleados`,
+      encabezados: ['Empleado', 'Cargo', 'Monto'],
+      filasHtml
+    };
+  }
   const filasHtml = filas.map(({ emp, r }) => `<tr>
     <td>${emp ? emp.nombre : '—'}${r.usaTasaUSD ? ' <span class="tag warn">USD</span>' : ''}</td>
     <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
@@ -176,23 +206,24 @@ export function construirResumenCorridaHTML(tipoPeriodo, fecha, filas, kind) {
   kind = kind || 'nomina';
   const totales = filas.reduce((a, { r }) => {
     if (kind === 'utilidades') return { devengado: a.devengado + r.montoBruto, deducciones: a.deducciones + r.incesTrabajador, neto: a.neto + r.montoNeto, aportes: 0 };
-    if (kind === 'bonovacacional') return { devengado: a.devengado + r.monto, deducciones: 0, neto: a.neto + r.monto, aportes: 0 };
+    if (kind === 'bonovacacional' || kind === 'bonoalimentacion') return { devengado: a.devengado + r.monto, deducciones: 0, neto: a.neto + r.monto, aportes: 0 };
     return { devengado: a.devengado + r.totalDevengado, deducciones: a.deducciones + r.totalDeducciones, neto: a.neto + r.neto, aportes: a.aportes + r.aportesPatronales };
   }, { devengado: 0, deducciones: 0, neto: 0, aportes: 0 });
   const { subtitulo, encabezados, filasHtml } = tituloYFilasResumen(tipoPeriodo, fecha, filas, kind);
   const tasaBCV = tasaEnFecha(fecha);
   const hayUSD = kind === 'nomina' && filas.some(({ r }) => r.usaTasaUSD);
+  const tituloKind = kind === 'nomina' ? ' de nómina' : kind === 'utilidades' ? ' de utilidades' : kind === 'bonoalimentacion' ? ' de bono de alimentación' : ' de bono vacacional';
   return `
     <div>
       ${logoHeaderHTML()}
-      <h2 style="margin-top:0;">${empresaConRif()} — Resumen${kind === 'nomina' ? ' de nómina' : kind === 'utilidades' ? ' de utilidades' : ' de bono vacacional'}</h2>
+      <h2 style="margin-top:0;">${empresaConRif()} — Resumen${tituloKind}</h2>
       <div class="desc">${subtitulo}</div>
       ${hayUSD ? `<div class="legal">Tasa BCV aplicada (fecha de corte): ${fmtNum(tasaBCV, 2)} Bs./USD — usada para los empleados marcados "USD"</div>` : ''}
       <table style="margin-top:10px;"><thead><tr>${encabezados.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${filasHtml}</tbody></table>
       <div class="totals">
         <div class="item"><div class="lbl">Total devengado</div><div class="val">${fmt(totales.devengado, fecha)}</div></div>
-        ${kind !== 'bonovacacional' ? `<div class="item"><div class="lbl">Total deducciones</div><div class="val">${fmt(totales.deducciones, fecha)}</div></div>` : ''}
+        ${(kind !== 'bonovacacional' && kind !== 'bonoalimentacion') ? `<div class="item"><div class="lbl">Total deducciones</div><div class="val">${fmt(totales.deducciones, fecha)}</div></div>` : ''}
         <div class="item"><div class="lbl">Total neto a pagar</div><div class="val">${fmt(totales.neto, fecha)}</div></div>
         ${kind === 'nomina' ? `<div class="item"><div class="lbl">Total aportes patronales</div><div class="val">${fmt(totales.aportes, fecha)}</div></div>` : ''}
       </div>
@@ -208,6 +239,7 @@ export function construirRecibosCorridaHTML(fecha, filas, kind) {
     const salto = i === 0 ? '' : 'page-break-before:always;break-before:page;';
     const contenido = kind === 'utilidades' ? utilidadesReciboHTML(emp, fecha, r, fila.numeroRecibo)
       : kind === 'bonovacacional' ? bonoVacacionalReciboHTML(emp, fila.anoServicio, fecha, r, fila.numeroRecibo)
+      : kind === 'bonoalimentacion' ? bonoAlimentacionReciboHTML(emp, fecha, r, fila.numeroRecibo)
       : reciboContentHTML(emp, fecha, r, fila.numeroRecibo);
     html += `<div style="${salto}padding-top:1px;">${contenido}</div>`;
   });

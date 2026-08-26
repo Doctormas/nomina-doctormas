@@ -129,6 +129,16 @@ function comprobante(titulo, filas) {
     ${logoHeaderHTML()}
     <h3 style="font-size:1rem;margin-top:0;">${titulo}</h3>
     <table style="margin-top:8px;"><tbody>${filas.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
+    <table style="width:100%;margin-top:60px;table-layout:fixed;page-break-inside:avoid;break-inside:avoid;">
+      <tr>
+        <td style="width:50%;text-align:center;padding:0 20px;">
+          <div style="border-top:1px solid #3F4249;padding-top:6px;font-size:.8rem;">Firma del trabajador</div>
+        </td>
+        <td style="width:50%;text-align:center;padding:0 20px;">
+          <div style="border-top:1px solid #3F4249;padding-top:6px;font-size:.8rem;">Firma del aprobador</div>
+        </td>
+      </tr>
+    </table>
   </div>`;
 }
 

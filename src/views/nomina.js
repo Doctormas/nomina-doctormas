@@ -1,6 +1,7 @@
 import { state, persistAll, tipoNominaCfg, tomarNumeroRecibo } from '../state/store.js';
 import { generarCorridaNomina, TIPOS_NOMINA_ESPECIALES, departamentosEmpleados } from '../lib/calculos.js';
 import { construirResumenCorridaHTML, construirRecibosCorridaHTML } from '../lib/plantillasPdf.js';
+import { bonoAlimentacionBancoCSV, nominaBancoCSV } from '../lib/bancoCsv.js';
 import { construirInformeNominaHTML, construirInformeUtilidadesHTML, informeConAcciones } from '../lib/informes.js';
 import { fmt } from '../lib/moneda.js';
 import { fmtDate, todayStr, uid } from '../lib/formato.js';
@@ -37,18 +38,62 @@ function corridasGuardadas() {
     const emp = state.EMPLEADOS.find((e) => e.id === b.empId);
     map.get(key).filas.push({ emp, anoServicio: b.anoServicio, r: { dias: b.dias, salarioDiario: b.dias ? b.monto / b.dias : 0, monto: b.monto }, numeroRecibo: b.numeroRecibo });
   });
+  state.BONO_ALIM_PAGADO.forEach((b) => {
+    const key = 'bonoalimentacion|bonoalimentacion|' + b.fecha;
+    if (!map.has(key)) map.set(key, { kind: 'bonoalimentacion', tipoPeriodo: 'bonoalimentacion', fecha: b.fecha, filas: [] });
+    const emp = state.EMPLEADOS.find((e) => e.id === b.empId);
+    map.get(key).filas.push({ emp, r: { monto: b.monto }, numeroRecibo: b.numeroRecibo });
+  });
   return Array.from(map.values()).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+}
+
+// CSV en el formato que pide el banco para pagar el bono de alimentación
+// directo a cada trabajador (Tipo/Nro Documento, Nombre, Apellido, Teléfono,
+// Correo, Monto) — sin BOM y con ";" como separador, igual que la plantilla
+// del banco.
+async function descargarCsvBancoBono(fecha, filas) {
+  const csv = bonoAlimentacionBancoCSV(filas);
+  const res = await window.api.file.saveAs(csv, `Doctormas_BonoAlim_${fecha}.csv`, 'CSV', ['csv']);
+  if (!res.canceled) toast('CSV guardado: ' + res.filePath, 'success');
+}
+
+// ¿Esta corrida de nómina normal trae bono de alimentación incluido (sin
+// pagarlo aparte todavía)? Si es así, hay que sacarle su propio CSV, porque
+// las deducciones nunca se le aplican a él (no es de carácter salarial).
+function filasConBonoIncluido(filas) {
+  return filas.filter((f) => f.r && f.r.cestaticketPeriodo > 0);
+}
+
+// CSV de transferencia bancaria (con "Cuenta") para el salario neto de la
+// nómina — SIN el bono de alimentación: las deducciones (IVSS/FAOV/RPE/ISLR)
+// solo se aplican a lo salarial, así que el monto de esta transferencia es
+// el salario del período menos esas deducciones, nunca el neto con bono.
+async function descargarCsvBancoNomina(fecha, tipo, filas) {
+  const csv = nominaBancoCSV(filas, (f) => f.r.salarioNormalPeriodo - f.r.totalDeducciones);
+  const res = await window.api.file.saveAs(csv, `Doctormas_Nomina_${tipo}_${fecha}.csv`, 'CSV', ['csv']);
+  if (!res.canceled) toast('CSV guardado: ' + res.filePath, 'success');
+}
+
+// CSV del bono de alimentación cuando viene incluido dentro de una nómina
+// normal (no en su propia corrida aparte) — mismo formato que el bono
+// aparte, pero el monto sale de cestaticketPeriodo de cada fila, no de r.monto.
+async function descargarCsvBonoDeNomina(fecha, filas) {
+  const conBono = filasConBonoIncluido(filas);
+  const csv = bonoAlimentacionBancoCSV(conBono, (f) => f.r.cestaticketPeriodo);
+  const res = await window.api.file.saveAs(csv, `Doctormas_BonoAlim_${fecha}.csv`, 'CSV', ['csv']);
+  if (!res.canceled) toast('CSV guardado: ' + res.filePath, 'success');
 }
 
 function tipoLabelDe(kind, tipoPeriodo) {
   if (kind === 'utilidades') return 'Utilidades (fin de año)';
   if (kind === 'bonovacacional') return 'Bono vacacional';
+  if (kind === 'bonoalimentacion') return 'Bono de alimentación';
   return tipoNominaCfg(tipoPeriodo).label;
 }
 
 function totalNetoDe(kind, r) {
   if (kind === 'utilidades') return r.montoNeto;
-  if (kind === 'bonovacacional') return r.monto;
+  if (kind === 'bonovacacional' || kind === 'bonoalimentacion') return r.monto;
   return r.neto;
 }
 
@@ -83,6 +128,9 @@ function corridasHTML() {
       <td class="row-actions">
         <button class="btn ghost small" data-descargar-resumen="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Resumen (PDF)</button>
         <button class="btn ghost small" data-descargar-recibos="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Recibos (PDF)</button>
+        ${c.kind === 'bonoalimentacion' ? `<button class="btn ghost small" data-descargar-csv-banco="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV para el banco</button>` : ''}
+        ${c.kind === 'nomina' ? `<button class="btn ghost small" data-descargar-csv-nomina="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV banco (nómina)</button>` : ''}
+        ${(c.kind === 'nomina' && filasConBonoIncluido(c.filas).length) ? `<button class="btn ghost small" data-descargar-csv-bono-inc="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV bono alimentación</button>` : ''}
         <button class="btn danger ghost small" data-eliminar-corrida="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Eliminar</button>
       </td>
     </tr>`;
@@ -91,7 +139,7 @@ function corridasHTML() {
   return `
   <div class="card">
     <h2>Corrida de nómina completa</h2>
-    <div class="desc">Toma automáticamente los parámetros de <b>Configuración</b> (salario mínimo, tasas IVSS/FAOV/INCES/RPE, tasa de cambio) y calcula el pago de cada empleado activo para el período elegido, en una sola corrida. Utilidades y bono vacacional son un tipo de nómina más — se calculan y se guardan igual que una quincena, solo que con su propia fórmula (Art. 131 y Art. 192 LOTTT). Filtre por departamento si solo quiere correr nómina a un área de Doctormás.</div>
+    <div class="desc">Toma automáticamente los parámetros de <b>Configuración</b> (salario mínimo, tasas IVSS/FAOV/INCES/RPE, tasa de cambio) y calcula el pago de cada empleado activo para el período elegido, en una sola corrida. Utilidades, bono vacacional y bono de alimentación son un tipo de nómina más — se calculan y se guardan igual que una quincena, solo que con su propia fórmula (Art. 131 y Art. 192 LOTTT). Si paga el bono de alimentación aparte con su propia corrida, la nómina normal de ese mismo mes ya no lo vuelve a incluir. Filtre por departamento si solo quiere correr nómina a un área de Doctormás.</div>
     <div class="grid cols-4">
       <div class="field"><label>Tipo de nómina</label><select id="corridaTipo">${tipoOptions}</select></div>
       <div class="field"><label>Departamento</label><select id="corridaDepto">${deptOptions}</select></div>
@@ -177,6 +225,14 @@ function wire(root, rerender) {
           });
           await persistAll();
           toast(`Bono vacacional guardado: ${filas.length - omitidos} pagos agregados${omitidos ? ` (${omitidos} omitidos por ya estar pagados)` : ''}.`, 'success');
+        } else if (kind === 'bonoalimentacion') {
+          let omitidos = 0;
+          filas.forEach(({ emp, r }) => {
+            if (r.yaPagado) { omitidos++; return; }
+            state.BONO_ALIM_PAGADO.push({ id: uid(), empId: emp.id, fecha, monto: r.monto, numeroRecibo: tomarNumeroRecibo() });
+          });
+          await persistAll();
+          toast(`Bono de alimentación guardado: ${filas.length - omitidos} pagos agregados${omitidos ? ` (${omitidos} omitidos por ya estar pagados este mes)` : ''}. Las nóminas de este mes ya no lo incluirán.`, 'success');
         }
         rerender();
       }
@@ -192,6 +248,52 @@ function wire(root, rerender) {
       if (!res.canceled) toast('PDF guardado: ' + res.filePath, 'success');
     });
     cont.querySelector('.btn-row').appendChild(btnRecibos);
+    if (kind === 'bonoalimentacion') {
+      const btnCsvBanco = document.createElement('button');
+      btnCsvBanco.className = 'btn secondary';
+      btnCsvBanco.textContent = 'Descargar CSV para el banco';
+      btnCsvBanco.addEventListener('click', () => descargarCsvBancoBono(fecha, filas));
+      cont.querySelector('.btn-row').appendChild(btnCsvBanco);
+    }
+    if (kind === 'nomina') {
+      const btnCsvNomina = document.createElement('button');
+      btnCsvNomina.className = 'btn secondary';
+      btnCsvNomina.textContent = 'Descargar CSV para el banco (nómina)';
+      btnCsvNomina.addEventListener('click', () => descargarCsvBancoNomina(fecha, tipo, filas));
+      cont.querySelector('.btn-row').appendChild(btnCsvNomina);
+      if (filasConBonoIncluido(filas).length) {
+        const btnCsvBonoInc = document.createElement('button');
+        btnCsvBonoInc.className = 'btn secondary';
+        btnCsvBonoInc.textContent = 'Descargar CSV bono de alimentación';
+        btnCsvBonoInc.addEventListener('click', () => descargarCsvBonoDeNomina(fecha, filas));
+        cont.querySelector('.btn-row').appendChild(btnCsvBonoInc);
+      }
+    }
+  });
+
+  root.querySelectorAll('[data-descargar-csv-banco]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const [kind, tipoPeriodo, fecha] = b.dataset.descargarCsvBanco.split('|');
+      const corrida = corridasGuardadas().find((c) => c.kind === kind && c.tipoPeriodo === tipoPeriodo && c.fecha === fecha);
+      if (!corrida) return;
+      descargarCsvBancoBono(fecha, corrida.filas);
+    });
+  });
+  root.querySelectorAll('[data-descargar-csv-nomina]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const [kind, tipoPeriodo, fecha] = b.dataset.descargarCsvNomina.split('|');
+      const corrida = corridasGuardadas().find((c) => c.kind === kind && c.tipoPeriodo === tipoPeriodo && c.fecha === fecha);
+      if (!corrida) return;
+      descargarCsvBancoNomina(fecha, tipoPeriodo, corrida.filas);
+    });
+  });
+  root.querySelectorAll('[data-descargar-csv-bono-inc]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const [kind, tipoPeriodo, fecha] = b.dataset.descargarCsvBonoInc.split('|');
+      const corrida = corridasGuardadas().find((c) => c.kind === kind && c.tipoPeriodo === tipoPeriodo && c.fecha === fecha);
+      if (!corrida) return;
+      descargarCsvBonoDeNomina(fecha, corrida.filas);
+    });
   });
 
   root.querySelectorAll('[data-descargar-resumen]').forEach((b) => {
@@ -229,6 +331,7 @@ function wire(root, rerender) {
       if (kind === 'nomina') state.PERIODOS = state.PERIODOS.filter((p) => !(p.tipoPeriodo === tipoPeriodo && p.fecha === fecha));
       else if (kind === 'utilidades') state.UTILIDADES_PAGADAS = state.UTILIDADES_PAGADAS.filter((u) => u.fecha !== fecha);
       else if (kind === 'bonovacacional') state.BONO_VAC_PAGADO = state.BONO_VAC_PAGADO.filter((b2) => b2.fecha !== fecha);
+      else if (kind === 'bonoalimentacion') state.BONO_ALIM_PAGADO = state.BONO_ALIM_PAGADO.filter((b2) => b2.fecha !== fecha);
       await persistAll();
       rerender();
     });
