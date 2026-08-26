@@ -8,6 +8,9 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Respaldo manual: por si el disparo automático por tag no llega a activarse,
+  # se puede lanzar el mismo build desde la pestaña Actions de GitHub ("Run workflow").
+  workflow_dispatch: {}
 
 permissions:
   contents: write
