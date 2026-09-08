@@ -3,7 +3,7 @@
 // pestaña con la que se relaciona (Nómina, Vacaciones, Utilidades, Prestaciones).
 import { state, tipoNominaCfg, empresaConRif } from '../state/store.js';
 import { logoHeaderHTML } from './logo.js';
-import { estadoVacaciones, calcularPrestaciones, antiguedad, salarioVigente, diasUtilidadesEmp, cestaticketEmp, islrPorcentajeEmp } from '../lib/calculos.js';
+import { estadoVacaciones, calcularPrestaciones, antiguedad, salarioVigente, diasUtilidadesEmp, cestaticketEmp, islrPorcentajeEmp, calcularDPPMes } from '../lib/calculos.js';
 import { fmt } from './moneda.js';
 import { fmtDate, tablaToCSV } from './formato.js';
 import { downloadCSV } from './csv.js';
@@ -89,16 +89,18 @@ export function construirInformeNominaHTML(desde, hasta, tipoPeriodo) {
   };
 }
 
-/* ---------- Parafiscales / aportes al Estado (pestaña Parafiscales) ---------- */
+/* ---------- Parafiscales / aportes al Estado (pestaña Parafiscales) ----------
+ * La Ley de Protección de las Pensiones (DPP) NO entra en este informe — se
+ * calcula y se declara aparte, una vez al mes, en el segmento DPP de esta
+ * misma pestaña (ver calcularDPPMes en calculos.js). */
 export function generarInformeAportes(desde, hasta) {
   const periodos = state.PERIODOS.filter((p) => p.fecha >= desde && p.fecha <= hasta);
   const totales = periodos.reduce((a, p) => ({
     ivss: a.ivss + p.resultado.ivssPatrono, faov: a.faov + p.resultado.faovPatrono,
     rpe: a.rpe + p.resultado.rpePatrono, inces: a.inces + p.resultado.incesPatrono,
-    dpp: a.dpp + (p.resultado.dppPatrono || 0),
     ivssTrab: a.ivssTrab + p.resultado.ivssTrab, faovTrab: a.faovTrab + p.resultado.faovTrab, rpeTrab: a.rpeTrab + p.resultado.rpeTrab
-  }), { ivss: 0, faov: 0, rpe: 0, inces: 0, dpp: 0, ivssTrab: 0, faovTrab: 0, rpeTrab: 0 });
-  const totalPatrono = totales.ivss + totales.faov + totales.rpe + totales.inces + totales.dpp;
+  }), { ivss: 0, faov: 0, rpe: 0, inces: 0, ivssTrab: 0, faovTrab: 0, rpeTrab: 0 });
+  const totalPatrono = totales.ivss + totales.faov + totales.rpe + totales.inces;
   return { totales, totalPatrono, cantidad: periodos.length };
 }
 
@@ -116,11 +118,10 @@ export function construirInformeAportesHTML(desde, hasta) {
           <tr><td>FAOV / BANAVIH</td><td>${fmt(totales.faovTrab)}</td><td>${fmt(totales.faov)}</td></tr>
           <tr><td>RPE / Paro forzoso</td><td>${fmt(totales.rpeTrab)}</td><td>${fmt(totales.rpe)}</td></tr>
           <tr><td>INCES</td><td>—</td><td>${fmt(totales.inces)}</td></tr>
-          <tr><td>Ley de Protección de las Pensiones (DPP, SENIAT)</td><td>—</td><td>${fmt(totales.dpp)}</td></tr>
         </tbody>
       </table>
       <div class="totals"><div class="item"><div class="lbl">Total aportado por Doctormás al Estado</div><div class="val">${fmt(totalPatrono)}</div></div></div>
-      <div class="note" style="margin-top:12px;">El INCES trabajador (0,5%) solo se calcula sobre utilidades y aparece en el informe de Utilidades, no aquí. La DPP se calculó con la base mínima por trabajador vigente (${state.CONFIG.dppBaseMinima} ${state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.'} — Art. 7 Ley DPP) para quien ganó menos que eso en el mes. Verifique siempre las alícuotas vigentes (IVSS, FAOV, INCES, RPE en Gaceta Oficial; DPP en el portal del SENIAT) antes de declarar y pagar.</div>
+      <div class="note" style="margin-top:12px;">El INCES trabajador (0,5%) solo se calcula sobre utilidades y aparece en el informe de Utilidades, no aquí. La Ley de Protección de las Pensiones (DPP) tampoco está en este informe — se calcula aparte, una vez al mes, en el segmento <b>DPP</b> de esta pestaña. Verifique siempre las alícuotas vigentes (IVSS, FAOV, INCES, RPE en Gaceta Oficial) antes de declarar y pagar.</div>
     </div>`;
   return {
     contenidoHtml,
@@ -130,9 +131,36 @@ export function construirInformeAportesHTML(desde, hasta) {
       ['FAOV', totales.faovTrab.toFixed(2), totales.faov.toFixed(2)],
       ['RPE', totales.rpeTrab.toFixed(2), totales.rpe.toFixed(2)],
       ['INCES', '', totales.inces.toFixed(2)],
-      ['DPP (Ley de Protección de las Pensiones)', '', totales.dpp.toFixed(2)],
       ['Total aportado por Doctormás', '', totalPatrono.toFixed(2)]
     ]
+  };
+}
+
+/* ---------- DPP (Ley de Protección de las Pensiones) — cálculo mensual ---------- */
+export function construirInformeDPPHTML(mesISO) {
+  const { filas, totalDPP, dppBaseMinimaBs } = calcularDPPMes(mesISO);
+  const filasHtml = filas.map((f) => `<tr>
+    <td>${f.emp.nombre}</td><td>${fmt(f.salario)}</td><td>${fmt(f.bono)}</td>
+    <td>${fmt(f.baseFinal)}${f.baseMinimaAplicada ? ' <span class="tag warn">mínimo</span>' : ''}</td>
+    <td><b>${fmt(f.dpp)}</b></td>
+  </tr>`).join('');
+  const contenidoHtml = `
+    <div>
+      ${logoHeaderHTML()}
+      <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Ley de Protección de las Pensiones (DPP)</h3>
+      <div class="legal">Mes ${mesISO} · ${state.CONFIG.dppPatrono}% sobre el total pagado a cada trabajador (salario + bono de alimentación), con un mínimo de ${fmt(dppBaseMinimaBs)} por trabajador · ${filas.length} trabajadores</div>
+      <table style="margin-top:10px;">
+        <thead><tr><th>Trabajador</th><th>Salario del mes</th><th>Bono de alimentación</th><th>Base aplicada</th><th>Aporte DPP</th></tr></thead>
+        <tbody>${filasHtml || '<tr class="empty-row"><td colspan="5">No hay nómina guardada para este mes.</td></tr>'}</tbody>
+      </table>
+      <div class="totals"><div class="item"><div class="lbl">Total DPP a declarar y pagar</div><div class="val">${fmt(totalDPP)}</div></div></div>
+      <div class="note" style="margin-top:12px;">Recaudada por el SENIAT — 100% a cargo del patrono, no se descuenta al trabajador. La base mínima por trabajador (Art. 7 Ley DPP) es ${state.CONFIG.dppBaseMinima} ${state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.'}; quien marcado "mínimo" ganó menos que eso en el mes y su aporte igual se calculó sobre ese mínimo. Verifique la alícuota vigente en el portal del SENIAT antes de declarar.</div>
+    </div>`;
+  return {
+    contenidoHtml,
+    csvHeaders: ['Trabajador', 'Salario del mes', 'Bono de alimentación', 'Base aplicada', 'Mínimo aplicado', 'Aporte DPP'],
+    csvRows: filas.map((f) => [f.emp.nombre, f.salario.toFixed(2), f.bono.toFixed(2), f.baseFinal.toFixed(2), f.baseMinimaAplicada ? 'Sí' : 'No', f.dpp.toFixed(2)])
+      .concat([['Total', '', '', '', '', totalDPP.toFixed(2)]])
   };
 }
 

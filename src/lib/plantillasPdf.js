@@ -85,10 +85,10 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
           <tr><td>FAOV patrono (${state.CONFIG.faovPatrono}%)</td><td>${fmt(r.faovPatrono, fecha)}</td></tr>
           <tr><td>RPE patrono (${state.CONFIG.rpePatrono}%)</td><td>${fmt(r.rpePatrono, fecha)}</td></tr>
           <tr><td>INCES patrono (${state.CONFIG.incesPatrono}%)</td><td>${fmt(r.incesPatrono, fecha)}</td></tr>
-          <tr><td>Ley de Protección de las Pensiones / DPP (${state.CONFIG.dppPatrono}%)${r.dppBaseMinimaAplicada ? ' <span class="legal">— calculada sobre la base mínima</span>' : ''}</td><td>${fmt(r.dppPatrono, fecha)}</td></tr>
           <tr><td><b>Total aportes patronales</b></td><td><b>${fmt(r.aportesPatronales, fecha)}</b></td></tr>
         </tbody>
       </table>
+      <div class="legal" style="margin-top:2px;">La Ley de Protección de las Pensiones (DPP) no se calcula aquí — se paga una vez al mes por el total de nómina de cada trabajador, en Parafiscales → DPP.</div>
       ${FIRMA_HTML(empresaConRif())}
     </div>`;
 }

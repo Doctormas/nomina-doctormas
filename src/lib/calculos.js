@@ -292,25 +292,15 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   // Cada tipo de nómina se calcula únicamente con lo que ese recibo paga: una
   // quincena se calcula con sus 15 días (o menos si ingresó a mitad), un pago
   // mensual con sus 30 — no se acumula el mes completo de otro recibo ni se
-  // resta ningún anticipo. Todo, incluyendo el tope y la base mínima de la
-  // Ley DPP, se prorratea a la fracción del mes que representan estos días.
-  let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0, dppPatrono = 0, dppBaseMinimaAplicada = false;
+  // resta ningún anticipo. La Ley DPP NO se calcula aquí (recibo por recibo):
+  // se paga una vez al mes por el total del mes de cada trabajador — se
+  // calcula aparte, en Parafiscales (ver calcularDPPMes).
+  let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0;
   if (cfg.incluyeDeducciones) {
     const fraccionMes = diasPeriodo / 30;
     const topePeriodo = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
     const baseCotizable = Math.min(salarioNormalPeriodo, topePeriodo);
     const salarioIntegralPeriodo = si.integral * diasPeriodo;
-    // Base de la Ley de Protección de las Pensiones (DPP, recaudada por el SENIAT):
-    // total de pagos de nómina de este período — salario + bono de alimentación —
-    // con un MÍNIMO por trabajador (Art. 7 Ley DPP), prorrateado a los días de
-    // este período: si lo real es menor a ese mínimo, el aporte de esa persona
-    // igual se calcula sobre el mínimo, no sobre lo real.
-    const baseNominaPeriodoReal = salarioNormalPeriodo + cestaticketPeriodo;
-    const dppBaseMinimaBs = (state.CONFIG.dppBaseMinimaMoneda === 'USD'
-      ? state.CONFIG.dppBaseMinima * tasaEnFecha(fechaPeriodoISO)
-      : state.CONFIG.dppBaseMinima) * fraccionMes;
-    const baseNominaPeriodoTotal = Math.max(baseNominaPeriodoReal, dppBaseMinimaBs);
-    dppBaseMinimaAplicada = baseNominaPeriodoReal < dppBaseMinimaBs;
 
     ivssTrab = baseCotizable * (state.CONFIG.ivssTrabajador / 100);
     rpeTrab = baseCotizable * (state.CONFIG.rpeTrabajador / 100);
@@ -320,7 +310,6 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     faovPatrono = salarioIntegralPeriodo * (state.CONFIG.faovPatrono / 100);
     rpePatrono = baseCotizable * (state.CONFIG.rpePatrono / 100);
     incesPatrono = salarioNormalPeriodo * (state.CONFIG.incesPatrono / 100);
-    dppPatrono = baseNominaPeriodoTotal * (state.CONFIG.dppPatrono / 100);
 
     // ISLR (impuesto sobre la renta): % propio de cada empleado, determinado con el
     // formulario AR-I (declaración anual del trabajador). No hay un % general porque
@@ -344,9 +333,46 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
     ivssTrab, rpeTrab, faovTrab, islrTrab, totalDeducciones, totalDevengado, neto,
-    ivssPatrono, faovPatrono, rpePatrono, incesPatrono, dppPatrono, dppBaseMinimaAplicada,
-    aportesPatronales: ivssPatrono + faovPatrono + rpePatrono + incesPatrono + dppPatrono
+    ivssPatrono, faovPatrono, rpePatrono, incesPatrono,
+    aportesPatronales: ivssPatrono + faovPatrono + rpePatrono + incesPatrono
   };
+}
+
+/**
+ * Ley de Protección de las Pensiones (DPP, recaudada por el SENIAT): NO se
+ * calcula recibo por recibo — se paga una sola vez al mes por el TOTAL que
+ * cada trabajador recibió ese mes (salario de todas sus quincenas/mensual +
+ * bono de alimentación, esté incluido en la nómina o pagado aparte), con un
+ * mínimo por trabajador (Art. 7 Ley DPP) si lo real fue menor a eso.
+ * Se calcula en la pestaña Parafiscales, no en cada nómina individual.
+ */
+export function calcularDPPMes(mesISO) {
+  const empleadosIds = new Set();
+  state.PERIODOS.forEach((p) => { if (p.fecha.slice(0, 7) === mesISO) empleadosIds.add(p.empId); });
+  state.BONO_ALIM_PAGADO.forEach((b) => { if (b.fecha.slice(0, 7) === mesISO) empleadosIds.add(b.empId); });
+
+  const fechaRef = mesISO + '-01';
+  const dppBaseMinimaBs = state.CONFIG.dppBaseMinimaMoneda === 'USD'
+    ? state.CONFIG.dppBaseMinima * tasaEnFecha(fechaRef)
+    : state.CONFIG.dppBaseMinima;
+
+  const filas = Array.from(empleadosIds).map((empId) => {
+    const emp = state.EMPLEADOS.find((e) => e.id === empId);
+    const periodosDelMes = state.PERIODOS.filter((p) => p.empId === empId && p.fecha.slice(0, 7) === mesISO);
+    const salario = periodosDelMes.reduce((a, p) => a + p.resultado.salarioNormalPeriodo, 0);
+    const bonoEnNomina = periodosDelMes.reduce((a, p) => a + (p.resultado.cestaticketPeriodo || 0), 0);
+    const bonoAparte = state.BONO_ALIM_PAGADO.filter((b) => b.empId === empId && b.fecha.slice(0, 7) === mesISO)
+      .reduce((a, b) => a + b.monto, 0);
+    const bono = bonoEnNomina + bonoAparte;
+    const baseReal = salario + bono;
+    const baseMinimaAplicada = baseReal < dppBaseMinimaBs;
+    const baseFinal = Math.max(baseReal, dppBaseMinimaBs);
+    const dpp = baseFinal * (state.CONFIG.dppPatrono / 100);
+    return { emp, salario, bono, baseReal, baseFinal, baseMinimaAplicada, dpp };
+  }).filter((f) => f.emp).sort((a, b) => a.emp.nombre.localeCompare(b.emp.nombre));
+
+  const totalDPP = filas.reduce((a, f) => a + f.dpp, 0);
+  return { filas, totalDPP, dppBaseMinimaBs };
 }
 
 // Tipos de nómina "especiales": utilidades, bono vacacional y bono de

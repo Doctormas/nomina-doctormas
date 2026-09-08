@@ -1,6 +1,6 @@
 import { state, persistAll, empresaConRif } from '../state/store.js';
 import { logoHeaderHTML } from '../lib/logo.js';
-import { construirInformeAportesHTML, construirInformeARIHTML, construirInformeARCHTML, informeConAcciones } from '../lib/informes.js';
+import { construirInformeAportesHTML, construirInformeARIHTML, construirInformeARCHTML, construirInformeDPPHTML, informeConAcciones } from '../lib/informes.js';
 import { calcularPorcentajeARI, TARIFA_1, UT_VALOR_BS_REF, DESGRAVAMEN_UNICO_UT } from '../lib/ari.js';
 import { estimarIngresoAnualEmp } from '../lib/calculos.js';
 import { fmtNum, todayStr } from '../lib/formato.js';
@@ -8,15 +8,22 @@ import { toast } from '../components/toast.js';
 
 const MODULOS = [
   { id: 'aportes', label: 'Aportes patronales' },
+  { id: 'dpp', label: 'DPP' },
   { id: 'islr', label: 'ISLR (AR-I / AR-C)' }
 ];
 let MODULO_ACTIVO = 'aportes';
+
+function moduloHTML() {
+  if (MODULO_ACTIVO === 'aportes') return aportesHTML();
+  if (MODULO_ACTIVO === 'dpp') return dppHTML();
+  return islrHTML();
+}
 
 export function render(root) {
   const pillsHtml = MODULOS.map((m) => `<button data-modulo="${m.id}" class="${MODULO_ACTIVO === m.id ? 'active' : ''}">${m.label}</button>`).join('');
   root.innerHTML = `
   <div class="pill-toggle" id="parafPillToggle" style="margin-bottom:18px;">${pillsHtml}</div>
-  <div id="parafModuloArea">${MODULO_ACTIVO === 'aportes' ? aportesHTML() : islrHTML()}</div>`;
+  <div id="parafModuloArea">${moduloHTML()}</div>`;
 
   root.querySelector('#parafPillToggle').querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', () => {
@@ -33,7 +40,7 @@ function aportesHTML() {
   return `
   <div class="card">
     <h2>Parafiscales y aportes al Estado</h2>
-    <div class="desc">Todo lo que Doctormás debe pagar al Estado a partir de la nómina: IVSS, FAOV/BANAVIH, INCES y RPE (Régimen Prestacional de Empleo), más la Ley de Protección de las Pensiones de la Seguridad Social (DPP, recaudada por el SENIAT). Se calcula automáticamente a partir de las corridas de nómina guardadas en el rango de fechas elegido.</div>
+    <div class="desc">Todo lo que Doctormás debe pagar al Estado a partir de la nómina: IVSS, FAOV/BANAVIH, INCES y RPE (Régimen Prestacional de Empleo). Se calcula automáticamente a partir de las corridas de nómina guardadas en el rango de fechas elegido. La Ley de Protección de las Pensiones (DPP) se calcula aparte, en el segmento <b>DPP</b> — es mensual, no por recibo.</div>
     <div class="grid cols-3">
       <div class="field"><label>Desde</label><input type="date" id="parafDesde" value="${anoActual}-01-01"></div>
       <div class="field"><label>Hasta</label><input type="date" id="parafHasta" value="${todayStr()}"></div>
@@ -65,12 +72,33 @@ function aportesHTML() {
         <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.incesPatrono}%</div>
         <div class="legal">Trimestral, sobre nómina normal</div>
       </div>
+    </div>
+  </div>`;
+}
+
+function dppHTML() {
+  const mesActual = todayStr().slice(0, 7);
+  return `
+  <div class="card">
+    <h2>Ley de Protección de las Pensiones (DPP)</h2>
+    <div class="desc">Recaudada por el SENIAT (Gaceta Extraordinaria 6.806, 08-05-2024) — 100% a cargo del patrono, no se descuenta al trabajador. A diferencia de IVSS/FAOV/INCES/RPE, la DPP no se calcula recibo por recibo: se paga <b>una sola vez al mes</b> sobre el total que cada trabajador recibió ese mes (todas sus quincenas o su pago mensual, más el bono de alimentación, esté incluido en la nómina o pagado aparte), con un mínimo por trabajador si lo real fue menor a eso.</div>
+    <div class="grid cols-3">
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
-        <div class="desc" style="margin-bottom:4px;">Ley de Protección de las Pensiones (DPP)</div>
+        <div class="desc" style="margin-bottom:4px;">Alícuota DPP</div>
         <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.dppPatrono}%</div>
-        <div class="legal">Recaudada por el SENIAT, mensual, sin tope superior. Base mínima por trabajador: ${state.CONFIG.dppBaseMinima} ${state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.'} — si gana menos, se calcula igual sobre ese mínimo.</div>
+        <div class="legal">Hasta 15% permitido por ley — el SENIAT la fijó en 9%. Ajústela en Configuración → Parámetros.</div>
+      </div>
+      <div class="card" style="margin-bottom:0;padding:14px 16px;">
+        <div class="desc" style="margin-bottom:4px;">Base mínima por trabajador</div>
+        <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.dppBaseMinima} ${state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.'}</div>
+        <div class="legal">Art. 7 Ley DPP — si un trabajador ganó menos que esto en el mes, su aporte igual se calcula sobre este mínimo.</div>
       </div>
     </div>
+    <div class="grid cols-3" style="margin-top:14px;">
+      <div class="field"><label>Mes a calcular</label><input type="month" id="dppMes" value="${mesActual}"></div>
+      <div class="field" style="align-self:end;"><button class="btn" id="btnGenerarDPP">Calcular DPP del mes</button></div>
+    </div>
+    <div id="dppResultado"></div>
   </div>`;
 }
 
@@ -288,6 +316,16 @@ function wire(root) {
     const cont = root.querySelector('#parafResultado');
     cont.innerHTML = '';
     cont.appendChild(informeConAcciones({ contenidoHtml, filename: `parafiscales-${todayStr()}.pdf`, pdfTitle: 'Parafiscales', csvHeaders, csvRows }));
+  });
+
+  const btnGenerarDPP = root.querySelector('#btnGenerarDPP');
+  if (btnGenerarDPP) btnGenerarDPP.addEventListener('click', () => {
+    const mesISO = root.querySelector('#dppMes').value;
+    if (!mesISO) { toast('Seleccione el mes a calcular.', 'error'); return; }
+    const { contenidoHtml, csvHeaders, csvRows } = construirInformeDPPHTML(mesISO);
+    const cont = root.querySelector('#dppResultado');
+    cont.innerHTML = '';
+    cont.appendChild(informeConAcciones({ contenidoHtml, filename: `dpp-${mesISO}.pdf`, pdfTitle: 'DPP', csvHeaders, csvRows }));
   });
 
   const btnAbrirPlanillaARI = root.querySelector('#btnAbrirPlanillaARI');
