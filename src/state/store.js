@@ -7,7 +7,8 @@ function defaultConfig() {
     cestaticket: 0,               // monto mensual del bono de alimentación, NO salarial (Ley Cestaticket)
     cestaticketMoneda: 'USD',     // 'VES' o 'USD' — moneda en que se fija el bono de alimentación
     ivssTrabajador: 4,            // % fijo, Art. 66 Ley del Seguro Social
-    ivssPatrono: 9,                // % según riesgo: 9 mínimo / 10 medio / 11 máximo (LOPCYMAT)
+    ivssPatrono: 10,                // % según riesgo: 9 mínimo / 10 medio / 11 máximo (LOPCYMAT) —
+                                    // Doctormás está clasificado "RIESGO: 2" (medio) en su factura IVSS
     ivssTopeSalariosMinimos: 5,   // tope de cotización = 5 salarios mínimos
     faovTrabajador: 1,            // % sobre salario integral (Ley Régimen Prestacional de Vivienda y Hábitat)
     faovPatrono: 2,

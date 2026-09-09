@@ -1,5 +1,6 @@
 import { state, loadState, syncConfigured, persistAll } from './state/store.js';
-import { fetchTasaBCV } from './lib/tasa.js';
+import { fetchTasaBCV, importarHistoricoCompleto } from './lib/tasa.js';
+import { todayStr } from './lib/formato.js';
 import { syncPull, syncPush } from './lib/sync.js';
 import { ICONS } from './components/icons.js';
 import { toast } from './components/toast.js';
@@ -97,6 +98,22 @@ function wireUpdater() {
   });
 }
 
+// Mantiene el histórico de tasas al día solo: rellena automáticamente los
+// días que falten (hasta hoy) sin que el usuario tenga que entrar a
+// Configuración → Tasas y darle al botón "Actualizar histórico" a mano. Se
+// corre al abrir la app y, si la app se queda abierta, cada pocas horas —
+// así, si un día no se abre la app, al abrirla de nuevo se rellena solo el
+// hueco (la fuente ve.dolarapi.com guarda el histórico reciente).
+async function actualizarHistoricoTasaAuto() {
+  try {
+    await importarHistoricoCompleto('oficial', 'Oficial (BCV)', null, todayStr());
+    if (syncConfigured()) await syncPush();
+    if (ACTIVE_TAB === 'config') render();
+  } catch (err) {
+    console.error('[app] no se pudo actualizar el histórico de tasas automáticamente:', err);
+  }
+}
+
 async function boot() {
   await loadState();
   document.getElementById('sidebarVersion').textContent =
@@ -127,6 +144,9 @@ async function boot() {
     updateTasaHeaderLabel(status);
     if (ACTIVE_TAB === 'config') render();
   });
+
+  actualizarHistoricoTasaAuto();
+  setInterval(actualizarHistoricoTasaAuto, 6 * 60 * 60 * 1000); // por si la app queda abierta y cruza de día
 
   if (syncConfigured()) {
     syncPull(true, updateSyncLabel).then(() => render());

@@ -189,7 +189,7 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
     };
   }
   const filasHtml = filas.map(({ emp, r }) => `<tr>
-    <td>${emp ? emp.nombre : '—'}${r.usaTasaUSD ? ' <span class="tag warn">USD</span>' : ''}</td>
+    <td>${emp ? emp.nombre : '—'}</td>
     <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
     <td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
     <td><b>${fmt(r.neto, fecha)}</b></td><td>${fmt(r.aportesPatronales, fecha)}</td>
@@ -218,7 +218,7 @@ export function construirResumenCorridaHTML(tipoPeriodo, fecha, filas, kind) {
       ${logoHeaderHTML()}
       <h2 style="margin-top:0;">${empresaConRif()} — Resumen${tituloKind}</h2>
       <div class="desc">${subtitulo}</div>
-      ${hayUSD ? `<div class="legal">Tasa BCV aplicada (fecha de corte): ${fmtNum(tasaBCV, 2)} Bs./USD — usada para los empleados marcados "USD"</div>` : ''}
+      ${hayUSD ? `<div class="legal">Tasa BCV aplicada (fecha de corte): ${fmtNum(tasaBCV, 2)} Bs./USD — usada para quien tiene el salario o el bono de alimentación fijado en dólares</div>` : ''}
       <table style="margin-top:10px;"><thead><tr>${encabezados.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${filasHtml}</tbody></table>
       <div class="totals">

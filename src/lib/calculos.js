@@ -289,33 +289,47 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const ant = antiguedad(emp.fechaIngreso, fechaPeriodoISO);
   const si = salarioIntegralDiario(salarioMensual, ant.anoServicioActual, diasUtilidadesEmp(emp));
 
-  // Cada tipo de nómina se calcula únicamente con lo que ese recibo paga: una
-  // quincena se calcula con sus 15 días (o menos si ingresó a mitad), un pago
-  // mensual con sus 30 — no se acumula el mes completo de otro recibo ni se
-  // resta ningún anticipo. La Ley DPP NO se calcula aquí (recibo por recibo):
-  // se paga una vez al mes por el total del mes de cada trabajador — se
-  // calcula aparte, en Parafiscales (ver calcularDPPMes).
+  // Lo que se PAGA en este recibo (devengado) es solo lo de este período (15
+  // días de quincena, o 30 si es mensual) — eso no cambia. Pero IVSS, FAOV,
+  // RPE, INCES e ISLR son una obligación MENSUAL real: si el tipo de nómina
+  // que "trae las deducciones" (ej. segunda quincena) las calculara solo
+  // sobre sus propios 15 días, y la quincena sin deducciones (ej. primera)
+  // no aporta nada, entre las dos se estaría declarando y pagando la MITAD
+  // de lo que realmente corresponde ese mes. Por eso la base de las
+  // deducciones/aportes usa los días del MES completo del trabajador (todas
+  // sus quincenas hasta la fecha de corte, o los 30 días si es mensual) —
+  // prorrateados si ingresó a mitad de mes — aunque el dinero se descuente
+  // de este recibo en particular. La Ley DPP NO se calcula aquí (recibo por
+  // recibo): se paga una vez al mes por el total del mes de cada
+  // trabajador — se calcula aparte, en Parafiscales (ver calcularDPPMes).
   let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0;
   if (cfg.incluyeDeducciones) {
-    const fraccionMes = diasPeriodo / 30;
-    const topePeriodo = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
-    const baseCotizable = Math.min(salarioNormalPeriodo, topePeriodo);
-    const salarioIntegralPeriodo = si.integral * diasPeriodo;
+    const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
+    const inicioRealMes = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
+    const diasMes = Math.min(diasEntreInclusive(inicioRealMes, fechaPeriodoISO), 30);
+    const salarioMesBase = salarioDiario * diasMes;
+
+    const fraccionMes = diasMes / 30;
+    const topeMes = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
+    const baseCotizable = Math.min(salarioMesBase, topeMes);
+    const salarioIntegralMes = si.integral * diasMes;
 
     ivssTrab = baseCotizable * (state.CONFIG.ivssTrabajador / 100);
     rpeTrab = baseCotizable * (state.CONFIG.rpeTrabajador / 100);
-    faovTrab = salarioIntegralPeriodo * (state.CONFIG.faovTrabajador / 100);
+    faovTrab = salarioIntegralMes * (state.CONFIG.faovTrabajador / 100);
 
     ivssPatrono = baseCotizable * (state.CONFIG.ivssPatrono / 100);
-    faovPatrono = salarioIntegralPeriodo * (state.CONFIG.faovPatrono / 100);
+    faovPatrono = salarioIntegralMes * (state.CONFIG.faovPatrono / 100);
     rpePatrono = baseCotizable * (state.CONFIG.rpePatrono / 100);
-    incesPatrono = salarioNormalPeriodo * (state.CONFIG.incesPatrono / 100);
+    incesPatrono = salarioMesBase * (state.CONFIG.incesPatrono / 100);
 
     // ISLR (impuesto sobre la renta): % propio de cada empleado, determinado con el
     // formulario AR-I (declaración anual del trabajador). No hay un % general porque
     // depende de los ingresos y desgravámenes que cada quien declaró — se fija en su
-    // ficha (Empleados) y aquí solo se aplica sobre el salario normal de este período.
-    islrTrab = salarioNormalPeriodo * (islrPorcentajeEmp(emp) / 100);
+    // ficha (Empleados). Igual que las demás deducciones, se retiene una sola vez al
+    // mes (en la quincena que trae deducciones) sobre el salario normal del mes
+    // completo, no solo sobre los días de ese recibo.
+    islrTrab = salarioMesBase * (islrPorcentajeEmp(emp) / 100);
   }
 
   const totalDeducciones = ivssTrab + rpeTrab + faovTrab + islrTrab;
