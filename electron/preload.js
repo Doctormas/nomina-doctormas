@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('api', {
   pdf: {
     export: (html, title, suggestedName) => ipcRenderer.invoke('pdf:export', { html, title, suggestedName })
   },
+  contrato: {
+    export: (datos, defaultFilename) => ipcRenderer.invoke('contrato:export', { datos, defaultFilename })
+  },
   xlsx: {
     parseFile: (arrayBuffer) => ipcRenderer.invoke('xlsx:parseFile', arrayBuffer),
     downloadTemplate: (payload) => ipcRenderer.invoke('xlsx:downloadTemplate', payload),

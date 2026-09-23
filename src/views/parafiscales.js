@@ -63,9 +63,9 @@ function aportesHTML() {
         <div class="legal">Sobre salario integral</div>
       </div>
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
-        <div class="desc" style="margin-bottom:4px;">RPE / Paro forzoso patrono</div>
+        <div class="desc" style="margin-bottom:4px;">RPE patrono — Pérdida Involuntaria del Empleo</div>
         <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.rpePatrono}%</div>
-        <div class="legal">Mismo tope que IVSS</div>
+        <div class="legal">Mismo tope que IVSS · antes llamado "Paro forzoso"</div>
       </div>
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
         <div class="desc" style="margin-bottom:4px;">INCES patrono</div>

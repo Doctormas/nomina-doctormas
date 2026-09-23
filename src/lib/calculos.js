@@ -63,14 +63,36 @@ export function salarioBaseActualBs(emp) {
 
 export function salarioVigente(emp, fechaISO) {
   const hist = (emp.historial || []).slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
-  let s = null;
+  let entry = null;
   for (const h of hist) {
-    if (h.fecha <= fechaISO) s = (h.montoBs !== undefined ? h.montoBs : h.salario);
-    else break;
+    if (h.fecha <= fechaISO) entry = h; else break;
   }
-  if (s !== null) return s;
+  if (entry) {
+    // Si el cambio se cargó en USD, el equivalente en bolívares NO se
+    // congela con la tasa del día en que se cargó — se recalcula cada vez
+    // con la tasa vigente en la fecha que se está calculando (fechaISO),
+    // porque en dólares el salario no cambia, pero en bolívares sí por el
+    // diferencial cambiario. montoBs (si existe) queda solo como referencia
+    // de lo que valía ese día, no se usa para el cálculo.
+    if (entry.moneda === 'USD') return Number(entry.monto || 0) * tasaEnFecha(fechaISO);
+    return entry.montoBs !== undefined ? entry.montoBs : entry.salario;
+  }
   if (emp.monedaSalario === 'USD') return Number(emp.salarioBase || 0) * tasaEnFecha(fechaISO);
   return Number(emp.salarioBase || 0);
+}
+
+/** Sueldo semanal que el IVSS tiene realmente cargado para este trabajador,
+ * vigente a la fecha dada (histórico, como el salarial) — o null si nunca se
+ * cargó ninguno para él. Cuando existe, el IVSS y el RPE se calculan sobre
+ * ESE sueldo semanal (igual que hace el IVSS en la práctica), en vez de la
+ * fórmula legal con tope. */
+export function salarioSemanalIVSSVigente(emp, fechaISO) {
+  const hist = (emp.historialIVSS || []).slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  let s = null;
+  for (const h of hist) {
+    if (h.fecha <= fechaISO) s = h.salarioSemanal; else break;
+  }
+  return s;
 }
 
 /* ---------- Fórmulas legales ---------- */
@@ -303,6 +325,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   // recibo): se paga una vez al mes por el total del mes de cada
   // trabajador — se calcula aparte, en Parafiscales (ver calcularDPPMes).
   let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0;
+  let ivssBaseDeclarada = false;
   if (cfg.incluyeDeducciones) {
     const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
     const inicioRealMes = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
@@ -310,17 +333,44 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     const salarioMesBase = salarioDiario * diasMes;
 
     const fraccionMes = diasMes / 30;
-    const topeMes = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
-    const baseCotizable = Math.min(salarioMesBase, topeMes);
+    // Tope IVSS: 5 salarios mínimos (Art. 59 Ley del Seguro Social).
+    const topeIVSSMes = state.CONFIG.salarioMinimo * state.CONFIG.ivssTopeSalariosMinimos * fraccionMes;
+    let baseCotizable = Math.min(salarioMesBase, topeIVSSMes);
+    // Tope RPE: 10 salarios mínimos, con un PISO de 1 salario mínimo (Art. 46
+    // Ley del Régimen Prestacional de Empleo) — es una ley distinta a la del
+    // IVSS, con su propio tope (el doble del de IVSS), no el mismo.
+    const topeRPEMes = state.CONFIG.salarioMinimo * state.CONFIG.rpeTopeSalariosMinimos * fraccionMes;
+    const pisoRPEMes = state.CONFIG.salarioMinimo * (state.CONFIG.rpePisoSalariosMinimos || 1) * fraccionMes;
+    let baseCotizableRPE = Math.min(Math.max(salarioMesBase, pisoRPEMes), topeRPEMes);
     const salarioIntegralMes = si.integral * diasMes;
 
-    ivssTrab = baseCotizable * (state.CONFIG.ivssTrabajador / 100);
-    rpeTrab = baseCotizable * (state.CONFIG.rpeTrabajador / 100);
-    faovTrab = salarioIntegralMes * (state.CONFIG.faovTrabajador / 100);
+    // Si hay un sueldo semanal cargado en el IVSS para este trabajador
+    // (Empleados → Registro ante el IVSS), el IVSS y el RPE se calculan
+    // sobre ESE sueldo (× 5 semanas por mes, prorrateado si el mes es
+    // parcial) en vez de la fórmula con tope — reproduce exactamente lo que
+    // el IVSS va a cobrar en la práctica, tenga o no la base correcta según
+    // la ley. Sin ese dato cargado, se usa la fórmula legal de arriba.
+    const salarioSemanalIVSS = salarioSemanalIVSSVigente(emp, fechaPeriodoISO);
+    ivssBaseDeclarada = salarioSemanalIVSS !== null;
+    if (ivssBaseDeclarada) {
+      const baseDeclarada = salarioSemanalIVSS * 5 * fraccionMes;
+      baseCotizable = baseDeclarada;
+      baseCotizableRPE = baseDeclarada;
+    }
 
-    ivssPatrono = baseCotizable * (state.CONFIG.ivssPatrono / 100);
+    // IVSS y RPE van juntos en la misma inscripción patronal ante el IVSS —
+    // si el trabajador no está inscrito, no cotiza ninguno de los dos (ni
+    // trabajador ni patrono). FAOV e INCES son registros aparte y sí aplican
+    // igual, esté o no inscrito en el IVSS.
+    const inscritoIVSS = emp.inscritoIVSS !== false;
+    if (inscritoIVSS) {
+      ivssTrab = baseCotizable * (state.CONFIG.ivssTrabajador / 100);
+      rpeTrab = baseCotizableRPE * (state.CONFIG.rpeTrabajador / 100);
+      ivssPatrono = baseCotizable * (state.CONFIG.ivssPatrono / 100);
+      rpePatrono = baseCotizableRPE * (state.CONFIG.rpePatrono / 100);
+    }
+    faovTrab = salarioIntegralMes * (state.CONFIG.faovTrabajador / 100);
     faovPatrono = salarioIntegralMes * (state.CONFIG.faovPatrono / 100);
-    rpePatrono = baseCotizable * (state.CONFIG.rpePatrono / 100);
     incesPatrono = salarioMesBase * (state.CONFIG.incesPatrono / 100);
 
     // ISLR (impuesto sobre la renta): % propio de cada empleado, determinado con el
@@ -343,6 +393,8 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   return {
     salarioMensual, salarioDiario, salarioNormalPeriodo, cestaticketPeriodo, diasPeriodo,
     bonoAlimPagadoAparte,
+    inscritoIVSS: emp.inscritoIVSS !== false,
+    ivssBaseDeclarada,
     periodoParcial: diasPeriodo < diasConfigurados,
     periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,

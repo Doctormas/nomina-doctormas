@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const store = require('./store');
 const { renderHtmlToPdfBuffer } = require('./pdf');
+const { construirContratoBuffer } = require('./contrato');
 const XLSX = require('xlsx');
 const updater = require('./updater');
 
@@ -170,6 +171,19 @@ ipcMain.handle('pdf:export', async (evt, { html, title, suggestedName }) => {
     title: 'Guardar PDF',
     defaultPath: suggestedName,
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  if (res.canceled || !res.filePath) return { canceled: true };
+  fs.writeFileSync(res.filePath, buffer);
+  return { canceled: false, filePath: res.filePath };
+});
+
+/* ---------- IPC: Contrato de trabajo (Word) ---------- */
+ipcMain.handle('contrato:export', async (evt, { datos, defaultFilename }) => {
+  const buffer = await construirContratoBuffer(datos);
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Guardar contrato',
+    defaultPath: defaultFilename,
+    filters: [{ name: 'Word', extensions: ['docx'] }]
   });
   if (res.canceled || !res.filePath) return { canceled: true };
   fs.writeFileSync(res.filePath, buffer);

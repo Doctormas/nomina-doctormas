@@ -116,7 +116,7 @@ export function construirInformeAportesHTML(desde, hasta) {
         <tbody>
           <tr><td>IVSS</td><td>${fmt(totales.ivssTrab)}</td><td>${fmt(totales.ivss)}</td></tr>
           <tr><td>FAOV / BANAVIH</td><td>${fmt(totales.faovTrab)}</td><td>${fmt(totales.faov)}</td></tr>
-          <tr><td>RPE / Paro forzoso</td><td>${fmt(totales.rpeTrab)}</td><td>${fmt(totales.rpe)}</td></tr>
+          <tr><td>RPE — Pérdida Involuntaria del Empleo</td><td>${fmt(totales.rpeTrab)}</td><td>${fmt(totales.rpe)}</td></tr>
           <tr><td>INCES</td><td>—</td><td>${fmt(totales.inces)}</td></tr>
         </tbody>
       </table>
@@ -129,7 +129,7 @@ export function construirInformeAportesHTML(desde, hasta) {
     csvRows: [
       ['IVSS', totales.ivssTrab.toFixed(2), totales.ivss.toFixed(2)],
       ['FAOV', totales.faovTrab.toFixed(2), totales.faov.toFixed(2)],
-      ['RPE', totales.rpeTrab.toFixed(2), totales.rpe.toFixed(2)],
+      ['RPE — Pérdida Involuntaria del Empleo', totales.rpeTrab.toFixed(2), totales.rpe.toFixed(2)],
       ['INCES', '', totales.inces.toFixed(2)],
       ['Total aportado por Doctormás', '', totalPatrono.toFixed(2)]
     ]

@@ -6,6 +6,7 @@ import { resultadoConAcciones } from '../components/resultado.js';
 import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
 import { construirLibroVacacionesHTML, informeConAcciones } from '../lib/informes.js';
+import { estadoDe } from './empleados.js';
 
 // El bono vacacional se calcula y se paga desde la pestaña Nómina (es otro
 // tipo de nómina más) — aquí solo queda el seguimiento del disfrute de
@@ -56,13 +57,40 @@ function informesHTML() {
   </div>`;
 }
 
+// Un empleado egresado ya cerró su relación laboral (y su liquidación, si
+// se hizo, ya le pagó vacaciones vencidas y fraccionadas) — no tiene por
+// qué seguir apareciendo en ninguna parte de la pestaña Vacaciones.
 function opcionesEmpleados() {
-  return state.EMPLEADOS.map((e) => `<option value="${e.id}">${e.nombre}</option>`).join('');
+  return state.EMPLEADOS.filter((e) => estadoDe(e) !== 'egresado').map((e) => `<option value="${e.id}">${e.nombre}</option>`).join('');
+}
+
+function resumenGeneralHTML() {
+  const hoy = todayStr();
+  const filas = state.EMPLEADOS
+    .filter((e) => estadoDe(e) !== 'egresado' && e.fechaIngreso)
+    .map((emp) => ({ emp, ant: antiguedad(emp.fechaIngreso, hoy), est: estadoVacaciones(emp, hoy) }))
+    .sort((a, b) => b.est.pendientesTotal - a.est.pendientesTotal);
+
+  const rows = filas.map(({ emp, ant, est }) => `<tr>
+    <td>${emp.nombre}</td>
+    <td>${ant.anos}a ${ant.meses}m</td>
+    <td>${est.pendientesTotal > 0 ? '<span class="tag warn">' + est.pendientesTotal + ' días</span>' : '<span class="tag ok">Al día</span>'}</td>
+    <td>${fmtNum(est.fraccionVac, 1)}</td>
+  </tr>`).join('');
+
+  return `
+  <div class="card">
+    <h2>Días disponibles — resumen general</h2>
+    <div class="desc">Días de vacaciones vencidos y aún no disfrutados (Art. 190 LOTTT), de un vistazo para todo el personal. Los empleados egresados ya no aparecen aquí — su liquidación ya cubrió lo que tuvieran pendiente.</div>
+    <div class="table-wrap"><table><thead><tr><th>Empleado</th><th>Antigüedad</th><th>Días disponibles</th><th>Fracción año en curso</th></tr></thead>
+    <tbody>${rows || '<tr class="empty-row"><td colspan="4">Sin empleados activos registrados.</td></tr>'}</tbody></table></div>
+  </div>`;
 }
 
 function resumenHTML() {
   const opciones = opcionesEmpleados();
   return `
+  ${resumenGeneralHTML()}
   <div class="card">
     <h2>Vacaciones por empleado</h2>
     <div class="desc">Días correspondientes según antigüedad (Art. 190 y 192 LOTTT: 15 días hábiles + 1 día adicional por cada año, hasta un máximo de 15 adicionales).</div>
@@ -215,6 +243,16 @@ function wire(root, rerender) {
     }));
   });
 
+  // Texto de la columna "Año de servicio que cubre": arma el mismo reparto
+  // FIFO de planificarDisfrute (primero el año vencido más antiguo pendiente,
+  // luego el siguiente, etc.) — así se ve de una si los días entrados cubren
+  // 1, 2 o 3 años, en vez de asumir siempre "el año en curso".
+  function coberturaTexto(asignaciones, permisoDias) {
+    const partes = asignaciones.map((a) => `Año ${a.anoServicio} (${a.dias}d)`);
+    if (permisoDias > 0) partes.push(`Permiso remunerado (${permisoDias}d)`);
+    return partes.join(' + ') || '—';
+  }
+
   const btnCargarVacColectivas = root.querySelector('#btnCargarVacColectivas');
   if (btnCargarVacColectivas) btnCargarVacColectivas.addEventListener('click', () => {
     const fecha = root.querySelector('#vacColFecha').value;
@@ -226,13 +264,17 @@ function wire(root, rerender) {
     }
     const filas = activos.map((emp) => {
       const ant = antiguedad(emp.fechaIngreso, fecha);
-      const dias = diasVacacionesPorAno(ant.anoServicioActual);
+      const est = estadoVacaciones(emp, fecha);
+      // Por defecto se sugieren los días PENDIENTES acumulados (el año vencido
+      // más antiguo que aún no se disfrutó) — no el año en curso a secas.
+      const diasSugeridos = ant.anos === 0 ? 0 : (est.pendientesTotal > 0 ? est.pendientesTotal : diasVacacionesPorAno(ant.anoServicioActual));
+      const { asignaciones, permisoDias } = planificarDisfrute(emp, diasSugeridos, fecha);
       return `<tr>
         <td><input type="checkbox" class="vacColChk" data-emp="${emp.id}" checked style="width:auto;"></td>
         <td>${emp.nombre}</td>
         <td>${ant.anos}a ${ant.meses}m</td>
-        <td>Año ${ant.anoServicioActual}</td>
-        <td><input type="number" class="vacColDias" data-emp="${emp.id}" value="${dias}" min="0" style="max-width:90px;"></td>
+        <td class="vacColCobertura" data-emp="${emp.id}">${coberturaTexto(asignaciones, permisoDias)}</td>
+        <td><input type="number" class="vacColDias" data-emp="${emp.id}" value="${diasSugeridos}" min="0" style="max-width:90px;"></td>
       </tr>`;
     }).join('');
     cont.innerHTML = `
@@ -242,10 +284,22 @@ function wire(root, rerender) {
         <tbody>${filas}</tbody>
       </table>
       </div>
+      <div class="legal" style="margin-top:6px;">"Año de servicio que cubre" se recalcula solo al cambiar los días — primero llena el año vencido más antiguo pendiente, y si alcanza para más, sigue con el siguiente.</div>
       <button class="btn" id="btnConfirmarVacColectivas" style="margin-top:12px;">Registrar vacaciones colectivas</button>
     `;
     cont.querySelector('#vacColTodos').addEventListener('change', (e) => {
       cont.querySelectorAll('.vacColChk').forEach((c) => { c.checked = e.target.checked; });
+    });
+    cont.querySelectorAll('.vacColDias').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        const empId = inp.dataset.emp;
+        const emp = state.EMPLEADOS.find((e) => e.id === empId);
+        if (!emp) return;
+        const dias = Number(inp.value) || 0;
+        const { asignaciones, permisoDias } = planificarDisfrute(emp, dias, fecha);
+        const celda = cont.querySelector(`.vacColCobertura[data-emp="${empId}"]`);
+        if (celda) celda.textContent = coberturaTexto(asignaciones, permisoDias);
+      });
     });
     cont.querySelector('#btnConfirmarVacColectivas').addEventListener('click', async () => {
       const candidatos = [];
@@ -258,49 +312,44 @@ function wire(root, rerender) {
         const diasInput = cont.querySelector(`.vacColDias[data-emp="${empId}"]`);
         const dias = Number(diasInput.value);
         if (!dias) return;
-        const ant = antiguedad(emp.fechaIngreso, fecha);
-        const anoServicio = ant.anoServicioActual;
-        if (ant.anos === 0) {
-          // Todavía no cumple su primer año: no hay derecho legal a vacaciones
-          // (Art. 190 LOTTT) — esto se registra como permiso remunerado, no
-          // como un adelanto del año 1 que luego se le descontaría.
-          candidatos.push({ emp, esPermiso: true, dias });
-          return;
-        }
-        // Solo se revisa que no excedan los días del año — el "año en curso" es
-        // justo lo que esta operación colectiva registra a propósito, así que
-        // no tiene sentido avisar que "aún no lo cumple".
-        const yaDisfrutado = state.VAC_DISFRUTE.filter((d) => d.empId === empId && d.anoServicio === anoServicio).reduce((a, d) => a + Number(d.dias), 0);
-        const diasCorresponden = diasVacacionesPorAno(anoServicio);
-        if (yaDisfrutado + dias > diasCorresponden) {
-          avisos.push(`${emp.nombre}: el año ${anoServicio} da derecho a ${diasCorresponden} días, y con este registro llevaría ${yaDisfrutado + dias}.`);
-        }
-        candidatos.push({ emp, anoServicio, dias });
+        // Mismo reparto FIFO que "Disfrute individual": llena primero el año
+        // vencido pendiente más antiguo, luego el siguiente, y solo si ya no
+        // quedan pendientes cae en un adelanto al año en curso (o permiso
+        // remunerado, si todavía no cumple su primer año).
+        const { asignaciones, permisoDias, avisos: avisosEmp } = planificarDisfrute(emp, dias, fecha);
+        avisos.push(...avisosEmp);
+        candidatos.push({ emp, asignaciones, permisoDias });
       });
 
       if (avisos.length) {
         const ok = await confirmDialog({
           title: 'Revisar antes de registrar',
-          message: avisos.join('<br>') + '<br><br>¿Registrar de todas formas?',
+          message: avisos.join('<br><br>') + '<br><br>¿Registrar de todas formas?',
           confirmLabel: 'Registrar igual', danger: false
         });
         if (!ok) return;
       }
 
       const registrados = [];
-      candidatos.forEach(({ emp, anoServicio, dias, esPermiso }) => {
-        if (esPermiso) state.PERMISOS_REMUNERADOS.push({ id: uid(), empId: emp.id, dias, fecha });
-        else state.VAC_DISFRUTE.push({ id: uid(), empId: emp.id, anoServicio, dias, fecha });
-        registrados.push({ emp, anoServicio, dias, esPermiso });
+      candidatos.forEach(({ emp, asignaciones, permisoDias }) => {
+        asignaciones.forEach(({ anoServicio, dias }) => {
+          state.VAC_DISFRUTE.push({ id: uid(), empId: emp.id, anoServicio, dias, fecha });
+        });
+        if (permisoDias > 0) state.PERMISOS_REMUNERADOS.push({ id: uid(), empId: emp.id, dias: permisoDias, fecha });
+        registrados.push({ emp, asignaciones, permisoDias });
       });
       await persistAll();
-      const filasHtml = registrados.map((r) => `<tr><td>${r.emp.nombre}</td><td>${r.esPermiso ? 'Permiso remunerado' : 'Año ' + r.anoServicio}</td><td>${r.dias}</td></tr>`).join('');
+      const filasHtml = registrados.map((r) => {
+        const detalle = coberturaTexto(r.asignaciones, r.permisoDias);
+        const totalDias = r.asignaciones.reduce((a, x) => a + x.dias, 0) + r.permisoDias;
+        return `<tr><td>${r.emp.nombre}</td><td>${detalle}</td><td>${totalDias}</td></tr>`;
+      }).join('');
       const contenidoHtml = `
         <div>
           ${logoHeaderHTML()}
           <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Vacaciones colectivas</h3>
           <div class="legal">Fecha de inicio: ${fmtDate(fecha)} · ${registrados.length} empleados</div>
-          <table style="margin-top:8px;"><thead><tr><th>Empleado</th><th>Año de servicio</th><th>Días</th></tr></thead>
+          <table style="margin-top:8px;"><thead><tr><th>Empleado</th><th>Año(s) de servicio cubiertos</th><th>Días</th></tr></thead>
           <tbody>${filasHtml}</tbody></table>
         </div>`;
       const resCont = root.querySelector('#vacColectivasResultado');

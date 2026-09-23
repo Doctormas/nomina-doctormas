@@ -116,8 +116,24 @@ function wire(root, rerender) {
       guardarLabel: 'Guardar liquidación',
       onGuardar: async () => {
         state.LIQUIDACIONES.push({ id: uid(), empId, fecha, causa, resultado: L });
+        // Una vez liquidado, el empleado queda "Egresado" (no solo "Inactivo"
+        // genérico) — así no se arrastra por error a la próxima corrida de
+        // nómina, y en la pestaña Egreso de su ficha queda la fecha, el
+        // motivo, y el pendiente de desincorporarlo del IVSS y demás entes.
+        emp.activo = false;
+        emp.estado = 'egresado';
+        const tramitesPrevios = (emp.egreso && emp.egreso.tramites) || {};
+        emp.egreso = {
+          fecha, causa,
+          tramites: {
+            ivss: tramitesPrevios.ivss || { hecho: false, fecha: '' },
+            faov: tramitesPrevios.faov || { hecho: false, fecha: '' },
+            inces: tramitesPrevios.inces || { hecho: false, fecha: '' },
+            rpe: tramitesPrevios.rpe || { hecho: false, fecha: '' }
+          }
+        };
         await persistAll();
-        toast('Liquidación guardada.', 'success');
+        toast('Liquidación guardada. El empleado quedó marcado como Egresado — recuerde desincorporarlo del IVSS y demás entes (pestaña Egreso de su ficha).', 'success');
         rerender();
       }
     }));

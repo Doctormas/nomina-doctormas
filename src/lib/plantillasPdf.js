@@ -70,20 +70,21 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
       <table style="margin-top:14px;">
         <thead><tr><th colspan="2">Deducciones al trabajador</th></tr></thead>
         <tbody>
-          <tr><td>IVSS (${state.CONFIG.ivssTrabajador}%)</td><td>${fmt(r.ivssTrab, fecha)}</td></tr>
-          <tr><td>Paro forzoso / RPE (${state.CONFIG.rpeTrabajador}%)</td><td>${fmt(r.rpeTrab, fecha)}</td></tr>
+          <tr><td>IVSS (${state.CONFIG.ivssTrabajador}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.ivssTrab, fecha)}</td></tr>
+          <tr><td>RPE — Pérdida Involuntaria del Empleo (${state.CONFIG.rpeTrabajador}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.rpeTrab, fecha)}</td></tr>
           <tr><td>FAOV (${state.CONFIG.faovTrabajador}% s/ salario integral)</td><td>${fmt(r.faovTrab, fecha)}</td></tr>
           ${r.islrTrab ? `<tr><td>ISLR (AR-I)</td><td>${fmt(r.islrTrab, fecha)}</td></tr>` : ''}
           <tr><td><b>Total deducciones</b></td><td><b>${fmt(r.totalDeducciones, fecha)}</b></td></tr>
         </tbody>
       </table>
+      ${r.ivssBaseDeclarada ? '<div class="legal" style="margin-top:2px;">IVSS y RPE calculados sobre el sueldo semanal cargado en el IVSS para este trabajador, no sobre la fórmula legal con tope.</div>' : ''}
       <div class="totals"><div class="item"><div class="lbl">Neto a pagar</div><div class="val">${fmt(r.neto, fecha)}</div></div></div>
       <h3 style="font-size:1rem;margin:10px 0 4px;">Aportes patronales de este período (no se descuentan al trabajador)</h3>
       <table>
         <tbody>
-          <tr><td>IVSS patrono (${state.CONFIG.ivssPatrono}%)</td><td>${fmt(r.ivssPatrono, fecha)}</td></tr>
+          <tr><td>IVSS patrono (${state.CONFIG.ivssPatrono}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.ivssPatrono, fecha)}</td></tr>
           <tr><td>FAOV patrono (${state.CONFIG.faovPatrono}%)</td><td>${fmt(r.faovPatrono, fecha)}</td></tr>
-          <tr><td>RPE patrono (${state.CONFIG.rpePatrono}%)</td><td>${fmt(r.rpePatrono, fecha)}</td></tr>
+          <tr><td>RPE patrono — Pérdida Involuntaria del Empleo (${state.CONFIG.rpePatrono}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.rpePatrono, fecha)}</td></tr>
           <tr><td>INCES patrono (${state.CONFIG.incesPatrono}%)</td><td>${fmt(r.incesPatrono, fecha)}</td></tr>
           <tr><td><b>Total aportes patronales</b></td><td><b>${fmt(r.aportesPatronales, fecha)}</b></td></tr>
         </tbody>
@@ -189,7 +190,7 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
     };
   }
   const filasHtml = filas.map(({ emp, r }) => `<tr>
-    <td>${emp ? emp.nombre : '—'}</td>
+    <td>${emp ? emp.nombre : '—'}${r.inscritoIVSS ? '' : ' <span class="tag err">no inscrito IVSS</span>'}</td>
     <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
     <td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
     <td><b>${fmt(r.neto, fecha)}</b></td><td>${fmt(r.aportesPatronales, fecha)}</td>

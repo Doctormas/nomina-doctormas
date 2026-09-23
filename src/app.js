@@ -6,6 +6,7 @@ import { ICONS } from './components/icons.js';
 import { toast } from './components/toast.js';
 import { exportBackup, importBackup } from './lib/backup.js';
 import { updateTasaHeaderLabel, updateSyncLabel } from './components/statusbar.js';
+import { calcularNotificaciones } from './lib/notificaciones.js';
 
 import { render as renderDashboard } from './views/dashboard.js';
 import { render as renderConfig } from './views/config.js';
@@ -43,6 +44,39 @@ export function render() {
   const el = document.getElementById('mainArea');
   el.innerHTML = '';
   tab.view(el, render);
+  renderNotifBadge();
+}
+
+/* ---------- Centro de notificaciones ---------- */
+function renderNotifBadge() {
+  const badge = document.getElementById('notifBadge');
+  if (!badge) return;
+  const n = calcularNotificaciones().length;
+  badge.textContent = String(n);
+  badge.style.display = n ? '' : 'none';
+}
+
+function renderNotifPanel() {
+  const list = document.getElementById('notifPanelList');
+  if (!list) return;
+  const notifs = calcularNotificaciones();
+  list.innerHTML = notifs.length
+    ? notifs.map((n) => `<div class="notif-item notif-${n.severidad}">${n.texto}</div>`).join('')
+    : '<div class="notif-empty">Sin notificaciones pendientes.</div>';
+}
+
+function wireNotifCenter() {
+  const btn = document.getElementById('btnNotifBell');
+  const panel = document.getElementById('notifPanel');
+  if (!btn || !panel) return;
+  btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) renderNotifPanel();
+  });
+  document.addEventListener('click', (ev) => {
+    if (!panel.hidden && !panel.contains(ev.target) && ev.target !== btn) panel.hidden = true;
+  });
 }
 
 function renderSidebar() {
@@ -134,6 +168,8 @@ async function boot() {
   wireCurrencyToggle();
   wireMenuActions();
   wireUpdater();
+  wireNotifCenter();
+  setInterval(renderNotifBadge, 5 * 60 * 1000); // por si pasa un día abierta y se acerca el cierre de quincena
 
   updateTasaHeaderLabel(state.TASA.valor ? 'cache' : 'loading');
   updateSyncLabel();

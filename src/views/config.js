@@ -155,6 +155,9 @@ function parametrosHTML() {
         <div class="field"><label>Nombre de la empresa</label><input name="nombreEmpresa" value="${c.nombreEmpresa}"></div>
         <div class="field"><label>RIF</label><input name="rif" value="${c.rif || ''}"></div>
         <div class="field"><label>Salario mínimo mensual (Bs.)</label><input type="number" step="0.01" name="salarioMinimo" value="${c.salarioMinimo}"></div>
+        <div class="field"><label>Domicilio de la empresa</label><input name="domicilioLegal" value="${c.domicilioLegal || ''}" placeholder="Para el encabezado de contratos de trabajo"></div>
+        <div class="field"><label>Representante legal (nombre)</label><input name="repLegalNombre" value="${c.repLegalNombre || ''}" placeholder="Quien firma los contratos de trabajo"></div>
+        <div class="field"><label>Representante legal (cédula)</label><input name="repLegalCedula" value="${c.repLegalCedula || ''}"></div>
       </div>
       <h3>Nómina ordinaria</h3>
       <div class="grid cols-4">
@@ -164,11 +167,13 @@ function parametrosHTML() {
         </div>
         <div class="field"><label>IVSS trabajador (%)</label><input type="number" step="0.01" name="ivssTrabajador" value="${c.ivssTrabajador}"><div class="legal">Art. 66 Ley del Seguro Social — fijo, no varía por riesgo</div></div>
         <div class="field"><label>IVSS patrono (%)</label><input type="number" step="0.01" name="ivssPatrono" value="${c.ivssPatrono}"><div class="legal">9% riesgo mínimo · 10% medio · 11% máximo (LOPCYMAT)</div></div>
-        <div class="field"><label>Tope cotización IVSS/RPE (en salarios mínimos)</label><input type="number" step="0.5" name="ivssTopeSalariosMinimos" value="${c.ivssTopeSalariosMinimos}"></div>
+        <div class="field"><label>Tope cotización IVSS (en salarios mínimos)</label><input type="number" step="0.5" name="ivssTopeSalariosMinimos" value="${c.ivssTopeSalariosMinimos}"><div class="legal">Art. 59 Ley del Seguro Social</div></div>
         <div class="field"><label>FAOV trabajador (%)</label><input type="number" step="0.01" name="faovTrabajador" value="${c.faovTrabajador}"></div>
         <div class="field"><label>FAOV patrono (%)</label><input type="number" step="0.01" name="faovPatrono" value="${c.faovPatrono}"></div>
-        <div class="field"><label>RPE / paro forzoso trabajador (%)</label><input type="number" step="0.01" name="rpeTrabajador" value="${c.rpeTrabajador}"></div>
-        <div class="field"><label>RPE / paro forzoso patrono (%)</label><input type="number" step="0.01" name="rpePatrono" value="${c.rpePatrono}"></div>
+        <div class="field"><label>RPE trabajador — Pérdida Involuntaria del Empleo (%)</label><input type="number" step="0.01" name="rpeTrabajador" value="${c.rpeTrabajador}"><div class="legal">Antes llamado "paro forzoso" — así sale en la factura del IVSS</div></div>
+        <div class="field"><label>RPE patrono — Pérdida Involuntaria del Empleo (%)</label><input type="number" step="0.01" name="rpePatrono" value="${c.rpePatrono}"></div>
+        <div class="field"><label>Tope cotización RPE (en salarios mínimos)</label><input type="number" step="0.5" name="rpeTopeSalariosMinimos" value="${c.rpeTopeSalariosMinimos}"><div class="legal">Art. 46 Ley del Régimen Prestacional de Empleo — es una ley distinta a la del IVSS, con su propio tope (el doble del de IVSS)</div></div>
+        <div class="field"><label>Piso cotización RPE (en salarios mínimos)</label><input type="number" step="0.5" name="rpePisoSalariosMinimos" value="${c.rpePisoSalariosMinimos}"><div class="legal">Art. 46 misma ley — mínimo por debajo del cual igual se cotiza sobre este piso</div></div>
         <div class="field"><label>INCES trabajador (% solo sobre utilidades)</label><input type="number" step="0.01" name="incesTrabajador" value="${c.incesTrabajador}"></div>
         <div class="field"><label>INCES patrono (% trimestral sobre nómina)</label><input type="number" step="0.01" name="incesPatrono" value="${c.incesPatrono}"></div>
         <div class="field"><label>Ley de Protección de las Pensiones / DPP patrono (%)</label><input type="number" step="0.01" name="dppPatrono" value="${c.dppPatrono}"><div class="legal">100% patronal, recaudada por el SENIAT — la ley permite hasta 15%, actualmente fijada en 9%. Verifique la alícuota vigente antes de declarar.</div></div>
@@ -385,7 +390,7 @@ function wire(root, rerender) {
       e.preventDefault();
       const fd = new FormData(formConfig);
       for (const [k, v] of fd.entries()) {
-        if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda') state.CONFIG[k] = v;
+        if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula') state.CONFIG[k] = v;
         else state.CONFIG[k] = Number(v);
       }
       await persistAll();

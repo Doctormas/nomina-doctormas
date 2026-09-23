@@ -200,6 +200,44 @@ input,select,textarea{font-family:inherit;}
 }
 .topbar .sub{font-size:.76rem;color:var(--charcoal-muted);white-space:nowrap;}
 
+/* ---------- Centro de notificaciones ---------- */
+.notif-center{position:relative;}
+.notif-bell{
+  position:relative;
+  background:none;border:none;cursor:pointer;
+  font-size:1.15rem;line-height:1;padding:6px;
+  border-radius:var(--radius-sm,8px);
+}
+.notif-bell:hover{background:var(--cream);}
+.notif-badge{
+  position:absolute;top:0;right:0;
+  background:var(--red);color:#fff;
+  font-size:.62rem;font-weight:700;line-height:1;
+  min-width:16px;height:16px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 3px;
+}
+.notif-panel{
+  position:absolute;top:calc(100% + 8px);right:0;
+  width:320px;max-height:400px;overflow-y:auto;
+  background:var(--white);border:1px solid var(--line);
+  border-radius:var(--radius-md);box-shadow:var(--shadow-md);
+  z-index:50;
+}
+.notif-panel-header{
+  padding:10px 14px;font-weight:700;color:var(--burgundy);
+  border-bottom:1px solid var(--line);font-size:.85rem;
+}
+.notif-panel-list{padding:6px;}
+.notif-item{
+  padding:8px 10px;font-size:.8rem;line-height:1.4;
+  border-radius:8px;margin-bottom:4px;color:var(--charcoal);
+}
+.notif-item.notif-alta{background:var(--red-tint);}
+.notif-item.notif-media{background:var(--amber-tint);}
+.notif-item.notif-baja{background:var(--cream);}
+.notif-empty{padding:14px 10px;font-size:.8rem;color:var(--charcoal-muted);text-align:center;}
+
 main.content{
   flex:1;
   overflow-y:auto;
@@ -352,3 +390,11 @@ tbody tr:hover td{background:#fbf8f5;}
   body{background:#fff;overflow:visible;}
   .card{border:none;box-shadow:none;}
 }
+
+/* Barras de scroll un poco más oscuras (antes casi no se veían sobre el fondo crema) */
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track{background:var(--cream-2)}
+::-webkit-scrollbar-thumb{background:#a89d92;border-radius:8px;border:2px solid var(--cream-2)}
+::-webkit-scrollbar-thumb:hover{background:var(--charcoal-soft)}
+::-webkit-scrollbar-corner{background:var(--cream-2)}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-color:#a89d92 var(--cream-2)}}

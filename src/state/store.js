@@ -14,8 +14,13 @@ function defaultConfig() {
     faovPatrono: 2,
     incesTrabajador: 0.5,         // % sobre utilidades únicamente
     incesPatrono: 2,              // % trimestral sobre nómina total (no se descuenta al trabajador salvo utilidades)
-    rpeTrabajador: 0.5,           // % Régimen Prestacional de Empleo (paro forzoso)
+    rpeTrabajador: 0.5,           // % Régimen Prestacional de Empleo — RPE, Pérdida Involuntaria del Empleo
     rpePatrono: 2,
+    rpeTopeSalariosMinimos: 10,    // límite superior de la base de cotización del RPE — Art. 46 Ley del
+                                    // Régimen Prestacional de Empleo. Es el DOBLE del tope del IVSS (5):
+                                    // son dos leyes distintas, no comparten el mismo tope.
+    rpePisoSalariosMinimos: 1,     // límite inferior (Art. 46 misma ley): si el salario real es menor a
+                                    // 1 salario mínimo, el RPE igual se calcula sobre ese mínimo.
     dppPatrono: 9,                 // % Ley de Protección de las Pensiones de la Seguridad Social (Gaceta
                                     // Extraordinaria 6.806, 08-05-2024) — "DPP", recaudada por el SENIAT.
                                     // 100% patronal, hasta 15% permitido por ley (SENIAT la fijó en 9%).
@@ -41,6 +46,9 @@ function defaultConfig() {
     tasaInteresAnual: 20,         // % anual estimado (BCV promedio activa/pasiva) — editable por el usuario
     nombreEmpresa: 'Centro de Atención Médica Inmediata de Salud CAMIS, C.A.',
     rif: 'J-502185640',
+    repLegalNombre: 'José Ángel Báez Bello',  // nombre del representante legal de la empresa, para firmar contratos
+    repLegalCedula: '21131072',
+    domicilioLegal: '',            // domicilio de la empresa — para el encabezado del contrato de trabajo
     tiposNomina: {
       primera: {
         label: 'Primera quincena (1–15) — Anticipo',

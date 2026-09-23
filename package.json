@@ -1,6 +1,6 @@
 {
   "name": "nomina-doctormas",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Sistema de nómina Doctormás — conforme a la LOTTT (Venezuela)",
   "author": "Doctormás",
   "license": "UNLICENSED",
@@ -19,6 +19,7 @@
     "release:win": "electron-builder --win --publish always"
   },
   "dependencies": {
+    "docx": "^8.5.0",
     "electron-updater": "^6.8.9",
     "xlsx": "^0.18.5"
   },
@@ -43,6 +44,7 @@
       "src/**/*",
       "assets/**/*",
       "node_modules/xlsx/**/*",
+      "node_modules/docx/**/*",
       "package.json"
     ],
     "mac": {
