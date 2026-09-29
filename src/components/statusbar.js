@@ -14,14 +14,16 @@ export function updateTasaHeaderLabel(status) {
 export function updateSyncLabel() {
   const el = document.getElementById('syncHeaderLabel');
   const btn = document.getElementById('btnGuardarNube');
+  const btnCargar = document.getElementById('btnCargarNube');
   if (btn) {
     if (!syncConfigured()) { btn.style.display = 'none'; }
     else {
       btn.style.display = '';
       btn.classList.toggle('pendiente', state.CAMBIOS_SIN_SINCRONIZAR);
-      btn.textContent = state.CAMBIOS_SIN_SINCRONIZAR ? '☁️ Guardar cambios' : '☁️ Todo guardado';
+      btn.title = state.CAMBIOS_SIN_SINCRONIZAR ? 'Guardar cambios en la nube (hay cambios sin guardar)' : 'Todo guardado en la nube';
     }
   }
+  if (btnCargar) btnCargar.style.display = syncConfigured() ? '' : 'none';
   if (!el) return;
   if (!syncConfigured()) { el.style.display = 'none'; return; }
   el.style.display = '';

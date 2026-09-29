@@ -279,8 +279,8 @@ function empleadoFormModal(emp, idParaNuevo) {
             <div class="field"><label>Moneda del bono de alimentación</label>
               <select name="cestaticketMoneda"><option value="VES" ${emp.cestaticketMoneda !== 'USD' ? 'selected' : ''}>Bolívares (Bs.)</option><option value="USD" ${emp.cestaticketMoneda === 'USD' ? 'selected' : ''}>Dólares (USD, según tasa del día)</option></select>
             </div>
-            <div class="field"><label>Tarjeta de bono de alimentación</label>
-              <select name="tieneTarjetaAlimentacion"><option value="true" ${emp.tieneTarjetaAlimentacion !== false ? 'selected' : ''}>Sí tiene</option><option value="false" ${emp.tieneTarjetaAlimentacion === false ? 'selected' : ''}>No tiene / pendiente</option></select>
+            <div class="field"><label>Registrada en GlobalTicket (bono de alimentación)</label>
+              <select name="tieneTarjetaAlimentacion"><option value="true" ${emp.tieneTarjetaAlimentacion !== false ? 'selected' : ''}>Sí, registrada</option><option value="false" ${emp.tieneTarjetaAlimentacion === false ? 'selected' : ''}>No registrada / pendiente</option></select>
             </div>
           </div>
           <div class="field"><label>Descripción de funciones (para el contrato, además del cargo)</label><textarea name="contratoDescripcionServicio" rows="4" placeholder="Se determina con la mayor precisión posible">${emp.contratoDescripcionServicio || ''}</textarea></div>

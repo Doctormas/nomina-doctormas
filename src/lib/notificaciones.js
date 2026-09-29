@@ -59,7 +59,7 @@ export function calcularNotificaciones() {
     if (estado === 'activo' && recibeCestaticket && e.tieneTarjetaAlimentacion === false) {
       notifs.push({
         id: `cesta-${e.id}`, tipo: 'cestaticket', severidad: 'media',
-        texto: `${e.nombre} no tiene tarjeta de bono de alimentación.`
+        texto: `${e.nombre} no está registrada en GlobalTicket (bono de alimentación).`
       });
     }
 

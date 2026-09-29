@@ -187,6 +187,12 @@ async function boot() {
     toast(state.SYNC.status === 'ok' ? 'Cambios guardados en la nube.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
   });
 
+  document.getElementById('btnCargarNube').addEventListener('click', async () => {
+    await syncPull(false, updateSyncLabel);
+    toast(state.SYNC.status === 'ok' ? 'Cambios traídos del servidor.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
+    render();
+  });
+
   tickClock();
   setInterval(tickClock, 60 * 1000);
   wireCurrencyToggle();
