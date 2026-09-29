@@ -2,7 +2,8 @@ import { state, persistAll } from '../state/store.js';
 import { antiguedad, salarioVigente, diasUtilidadesEmp, cestaticketEmp } from '../lib/calculos.js';
 import { getTasaActualValor, tasaEnFecha, tipoNominaCfg, empresaConRif } from '../state/store.js';
 import { fmt } from '../lib/moneda.js';
-import { fmtDate, fmtNum, todayStr, uid } from '../lib/formato.js';
+import { fmtDate, fmtNum, todayStr, uid, parseDate } from '../lib/formato.js';
+import { logoHeaderHTML } from '../lib/logo.js';
 import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
 import { plantillaEmpleadosPayload, mapearFilasBulk, validarRegistroBulk } from '../lib/bulkEmpleados.js';
@@ -62,10 +63,10 @@ function listadoHTML() {
       <td>${diasUtilidadesEmp(e)} días${(e.diasUtilidadesAnual !== undefined && e.diasUtilidadesAnual !== null && e.diasUtilidadesAnual !== '') ? ' <span class="tag warn">propio</span>' : ''}</td>
       <td>${fmt(cestaticketEmp(e, todayStr()), todayStr())}${(e.cestaticket !== undefined && e.cestaticket !== null && e.cestaticket !== '') ? ` <span class="tag warn">propio${e.cestaticketMoneda === 'USD' ? ' USD' : ''}</span>` : ''}</td>
       <td>${estadoDe(e) === 'egresado' ? '<span class="tag err">Egresado</span>' : estadoDe(e) === 'inactivo' ? '<span class="tag err">Inactivo</span>' : '<span class="tag ok">Activo</span>'}${e.inscritoIVSS === false ? ' <span class="tag err">No inscrito IVSS</span>' : ''}</td>
-      <td class="row-actions">
-        <button class="btn ghost small" data-edit-emp="${e.id}">Editar</button>
-        <button class="btn danger ghost small" data-del-emp="${e.id}">Eliminar</button>
-      </td>
+      <td class="row-actions"><div class="row-actions-inner">
+        <button type="button" class="btn ghost small icon-only" data-edit-emp="${e.id}" title="Editar">✎</button>
+        <button type="button" class="btn danger ghost small icon-only" data-del-emp="${e.id}" title="Eliminar">✕</button>
+      </div></td>
     </tr>`;
   }).join('');
 
@@ -121,6 +122,7 @@ function wire(root, rerender) {
       state.UTILIDADES_PAGADAS = state.UTILIDADES_PAGADAS.filter((u) => u.empId !== id);
       state.BONO_VAC_PAGADO = state.BONO_VAC_PAGADO.filter((x) => x.empId !== id);
       state.PERIODOS = state.PERIODOS.filter((p) => p.empId !== id);
+      window.api.documentos.removeCarpeta(id);
       await persistAll(`Empleado eliminado: ${empBorrado ? empBorrado.nombre : id}`);
       rerender();
     });
@@ -141,10 +143,27 @@ function wire(root, rerender) {
    ========================================================= */
 let TEMP_HIST = [];
 let TEMP_HIST_IVSS = [];
+let TEMP_DOCUMENTOS = [];
 
-function empleadoFormModal(emp) {
+// Tipos de documento sugeridos — se precargan solos (fila en blanco, lista
+// para adjuntar) la primera vez que se abre la pestaña Documentos de un
+// empleado, para no tener que agregarlos uno por uno. De todos, en la
+// práctica solo vencen dos cosas: la cédula (fecha manual, "vence: true") y
+// el contrato de trabajo firmado — y ese NO se completa a mano: se toma
+// solo del "Tipo de contrato"/"Fecha de término" de la pestaña Datos
+// laborales ("vinculadoContrato: true", ver sincronizarVencimientoContrato).
+const TIPOS_DOCUMENTO_SUGERIDOS = [
+  { nombre: 'Cédula de identidad', vence: true },
+  { nombre: 'RIF', vence: false },
+  { nombre: 'Título / certificado de estudios', vence: false },
+  { nombre: 'Currículum vitae', vence: false },
+  { nombre: 'Contrato de trabajo firmado', vence: false, vinculadoContrato: true },
+  { nombre: 'Foto tipo carnet', vence: false }
+];
+
+function empleadoFormModal(emp, idParaNuevo) {
   emp = emp || {
-    id: null, nombre: '', cedula: '', cargo: '', fechaIngreso: todayStr(), salarioBase: state.CONFIG.salarioMinimo, monedaSalario: 'VES', activo: true, historial: [],
+    id: idParaNuevo, nombre: '', cedula: '', cargo: '', fechaIngreso: todayStr(), salarioBase: state.CONFIG.salarioMinimo, monedaSalario: 'VES', activo: true, historial: [],
     fechaNacimiento: '', nacionalidad: 'Venezolana', sexo: '', direccion: '', telefono: '', correo: '',
     departamento: '', tipoContrato: 'indefinido', formaPago: 'transferencia', banco: '', numeroCuenta: '',
     formaPago2: '', banco2: '', numeroCuenta2: '',
@@ -153,7 +172,7 @@ function empleadoFormModal(emp) {
     jornada: 'diurna', horarioDesde: '08:00', horarioHasta: '17:00', diasLaborables: 'lunes a viernes',
     modalidadPrestacion: 'presencial', lugarPrestacion: '', periodicidadPago: 'quincenal',
     beneficiosAdicionales: '', clausulasAdicionales: '',
-    estado: 'activo', egreso: null, tieneTarjetaAlimentacion: true
+    estado: 'activo', egreso: null, tieneTarjetaAlimentacion: true, documentos: []
   };
   const estadoActual = estadoDe(emp);
   const egreso = emp.egreso || { fecha: '', motivo: emp.motivoBaja || '', tramites: {} };
@@ -191,6 +210,7 @@ function empleadoFormModal(emp) {
     { id: 'remuneracion', label: 'Remuneración' },
     { id: 'bancario', label: 'Bancario' },
     { id: 'parafiscales', label: 'Parafiscales' },
+    { id: 'documentos', label: 'Documentos' },
     { id: 'contrato', label: 'Contrato' },
     { id: 'egreso', label: 'Egreso' }
   ];
@@ -399,6 +419,21 @@ function empleadoFormModal(emp) {
           </div>
         </div>
 
+        <div class="emp-tab-panel" data-emptab-panel="documentos" hidden>
+          <div class="desc">Carpeta de documentos físicos del expediente — adjunte el escaneo o foto de cada documento (PDF o imagen) y, si vence, su fecha de vencimiento (para que salga una notificación cuando se acerque o venza). Los archivos quedan guardados en este computador; no se comparten al sincronizar con su equipo.</div>
+          <datalist id="tiposDocumentoComunes">${TIPOS_DOCUMENTO_SUGERIDOS.map((t) => `<option value="${t.nombre}">`).join('')}</datalist>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Documento</th><th>Archivo</th><th>Vence el</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="empDocumentosBody"></tbody>
+          </table></div>
+          <button type="button" class="btn ghost small" id="btnAgregarDocumento" style="margin-top:10px;">+ Agregar documento</button>
+
+          <h3 style="font-size:1rem;margin-top:20px;">Generar expediente completo (PDF)</h3>
+          <div class="desc" style="margin-bottom:6px;">Arma un solo PDF con una portada (datos del empleado y el listado de documentos) seguida de todos los archivos adjuntos. Las fotos/imágenes se incluyen como página; los PDF se incrustan completos. Otros formatos (Word, etc.) no se pueden incrustar — quedan señalados en la portada para abrirlos aparte.</div>
+          <button type="button" class="btn" id="btnGenerarExpediente" disabled>⇩ Generar expediente (PDF)</button>
+          <div class="legal" id="expedienteFaltantesNota" style="margin-top:6px;"></div>
+        </div>
+
         <div class="emp-tab-panel" data-emptab-panel="contrato" hidden>
           <div class="desc">El contrato de trabajo en Word se arma con los datos que ya cargó en las demás pestañas (personales, laborales, jornada y lugar, remuneración) — con el contenido mínimo que exige el Art. 59 de la LOTTT. Aquí solo falta el lugar y la fecha de la firma.</div>
           <div class="grid cols-2">
@@ -447,10 +482,35 @@ function empleadoFormModal(emp) {
 }
 
 function openEmpModal(emp, rerender) {
+  const esNuevo = !emp;
+  // Un empleado nuevo aún no tiene id (se asigna recién al guardar) — pero
+  // los documentos que se adjunten aquí necesitan una carpeta YA, así que se
+  // genera de una vez y se reutiliza como id definitivo al guardar (mismo
+  // valor en el campo oculto "id" del formulario).
+  const empId = emp ? emp.id : uid();
   TEMP_HIST = emp ? JSON.parse(JSON.stringify(emp.historial || [])) : [];
   TEMP_HIST_IVSS = emp ? JSON.parse(JSON.stringify(emp.historialIVSS || [])) : [];
+  // Si el empleado aún no tiene ningún documento cargado, se precargan de
+  // una vez todos los tipos sugeridos (fila en blanco, lista para
+  // adjuntar) — así no hay que darle "+ Agregar documento" uno por uno.
+  const documentosExistentes = emp ? (emp.documentos || []) : [];
+  TEMP_DOCUMENTOS = documentosExistentes.length
+    ? JSON.parse(JSON.stringify(documentosExistentes))
+    : TIPOS_DOCUMENTO_SUGERIDOS.map((t) => {
+        if (t.vinculadoContrato) {
+          const esIndef = !emp || (emp.tipoContrato || 'indefinido') === 'indefinido';
+          return { id: uid(), tipo: t.nombre, archivoRuta: '', archivoNombre: '', fechaCarga: '', vinculadoContrato: true, vence: !esIndef, fechaVencimiento: esIndef ? '' : ((emp && emp.contratoFechaTermino) || '') };
+        }
+        return { id: uid(), tipo: t.nombre, archivoRuta: '', archivoNombre: '', fechaVencimiento: '', fechaCarga: '', vence: t.vence };
+      });
+  // Fichas guardadas ANTES de que existiera "vinculadoContrato" también
+  // deben quedar marcadas, para que el vencimiento del contrato se siga
+  // sincronizando solo (y no se pueda editar a mano por error).
+  TEMP_DOCUMENTOS.forEach((d) => {
+    if ((d.tipo || '').trim().toLowerCase() === 'contrato de trabajo firmado') d.vinculadoContrato = true;
+  });
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = empleadoFormModal(emp);
+  wrapper.innerHTML = empleadoFormModal(emp, empId);
   document.body.appendChild(wrapper.firstElementChild);
 
   const empTabToggle = document.getElementById('empTabToggle');
@@ -522,6 +582,135 @@ function openEmpModal(emp, rerender) {
     refreshHistTable();
   });
 
+  /* ---------- Documentos físicos ---------- */
+  function estadoVencimientoTag(d) {
+    if (!d.fechaVencimiento) {
+      if (d.vinculadoContrato) return d.vence ? '<span class="tag warn">Complete la fecha de término (pestaña Datos laborales)</span>' : '<span class="legal">Indefinido — sin vencimiento</span>';
+      if (d.vence) return '<span class="tag warn">Complete la fecha de vencimiento</span>';
+      return '<span class="legal">Sin vencimiento</span>';
+    }
+    const dias = Math.round((parseDate(d.fechaVencimiento) - parseDate(todayStr())) / 86400000);
+    if (dias < 0) return '<span class="tag err">Vencido</span>';
+    if (dias <= 30) return `<span class="tag warn">Vence en ${dias}d</span>`;
+    return '<span class="tag ok">Vigente</span>';
+  }
+
+  // El vencimiento de "Contrato de trabajo firmado" no se completa a mano:
+  // sale solo del "Tipo de contrato" y "Fecha de término" de la pestaña
+  // Datos laborales — si es indefinido, no vence; si es determinado/obra/
+  // pasantía, vence el mismo día que el contrato.
+  function sincronizarVencimientoContrato() {
+    const filaContrato = TEMP_DOCUMENTOS.find((d) => d.vinculadoContrato);
+    if (!filaContrato) return;
+    const tipoContratoSel = document.querySelector('[name="tipoContrato"]');
+    const fechaTerminoInput = document.querySelector('[name="contratoFechaTermino"]');
+    const esIndef = !tipoContratoSel || tipoContratoSel.value === 'indefinido';
+    filaContrato.vence = !esIndef;
+    filaContrato.fechaVencimiento = esIndef ? '' : ((fechaTerminoInput && fechaTerminoInput.value) || '');
+  }
+
+  function actualizarBotonExpediente() {
+    const btn = document.getElementById('btnGenerarExpediente');
+    const nota = document.getElementById('expedienteFaltantesNota');
+    if (!btn) return;
+    const faltantes = TEMP_DOCUMENTOS.filter((d) => !d.archivoRuta);
+    const listo = TEMP_DOCUMENTOS.length > 0 && faltantes.length === 0;
+    btn.disabled = !listo;
+    if (nota) {
+      nota.textContent = TEMP_DOCUMENTOS.length === 0
+        ? 'Agregue al menos un documento.'
+        : (faltantes.length ? `Faltan adjuntar: ${faltantes.map((d) => d.tipo || 'documento sin nombre').join(', ')}` : '');
+    }
+  }
+
+  function refreshDocumentosTable() {
+    const tbody = document.getElementById('empDocumentosBody');
+    if (!tbody) return;
+    tbody.innerHTML = TEMP_DOCUMENTOS.map((d, i) => `<tr>
+      <td><input type="text" class="docTipoInput" data-idx="${i}" value="${d.tipo || ''}" placeholder="Ej: Cédula de identidad" list="tiposDocumentoComunes"></td>
+      <td>${d.archivoNombre
+        ? `<span class="legal">${d.archivoNombre}</span> <button type="button" class="btn ghost small" data-ver-doc="${i}">Ver</button> <button type="button" class="btn ghost small" data-adjuntar-doc="${i}">Reemplazar</button>`
+        : `<button type="button" class="btn secondary small" data-adjuntar-doc="${i}">Adjuntar archivo</button>`}
+      </td>
+      <td>${d.vinculadoContrato
+        ? `<span class="legal">${d.fechaVencimiento ? fmtDate(d.fechaVencimiento) : '—'} (según Tipo de contrato)</span>`
+        : `<input type="date" class="docVenceInput" data-idx="${i}" value="${d.fechaVencimiento || ''}">`}</td>
+      <td>${estadoVencimientoTag(d)}</td>
+      <td><button type="button" class="btn danger ghost small" data-quitar-doc="${i}">Quitar</button></td>
+    </tr>`).join('') || '<tr><td colspan="5" style="color:var(--charcoal-soft);">Sin documentos agregados aún.</td></tr>';
+
+    tbody.querySelectorAll('.docTipoInput').forEach((inp) => {
+      inp.addEventListener('input', () => { TEMP_DOCUMENTOS[Number(inp.dataset.idx)].tipo = inp.value; });
+      inp.addEventListener('change', actualizarBotonExpediente);
+    });
+    tbody.querySelectorAll('.docVenceInput').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        TEMP_DOCUMENTOS[Number(inp.dataset.idx)].fechaVencimiento = inp.value;
+        refreshDocumentosTable();
+      });
+    });
+    tbody.querySelectorAll('[data-adjuntar-doc]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.dataset.adjuntarDoc);
+        const d = TEMP_DOCUMENTOS[idx];
+        const res = await window.api.documentos.attach(empId, d.id);
+        if (res.canceled) return;
+        if (d.archivoRuta) await window.api.documentos.removeArchivo(d.archivoRuta);
+        d.archivoRuta = res.archivoRuta; d.archivoNombre = res.archivoNombre; d.fechaCarga = todayStr();
+        refreshDocumentosTable();
+      });
+    });
+    tbody.querySelectorAll('[data-ver-doc]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const d = TEMP_DOCUMENTOS[Number(btn.dataset.verDoc)];
+        if (d.archivoRuta) window.api.shell.openPath(d.archivoRuta);
+      });
+    });
+    tbody.querySelectorAll('[data-quitar-doc]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.dataset.quitarDoc);
+        const d = TEMP_DOCUMENTOS[idx];
+        if (d.archivoRuta) await window.api.documentos.removeArchivo(d.archivoRuta);
+        TEMP_DOCUMENTOS.splice(idx, 1);
+        refreshDocumentosTable();
+      });
+    });
+    actualizarBotonExpediente();
+  }
+  sincronizarVencimientoContrato();
+  refreshDocumentosTable();
+  // El vencimiento de la fila "Contrato de trabajo firmado" se recalcula
+  // solo si cambian estos dos campos, aunque el usuario esté en otra
+  // pestaña — no hace falta pasar por la pestaña Documentos para que quede al día.
+  const tipoContratoSelDoc = document.querySelector('[name="tipoContrato"]');
+  const fechaTerminoInputDoc = document.querySelector('[name="contratoFechaTermino"]');
+  if (tipoContratoSelDoc) tipoContratoSelDoc.addEventListener('change', () => { sincronizarVencimientoContrato(); refreshDocumentosTable(); });
+  if (fechaTerminoInputDoc) fechaTerminoInputDoc.addEventListener('change', () => { sincronizarVencimientoContrato(); refreshDocumentosTable(); });
+
+  document.getElementById('btnAgregarDocumento').addEventListener('click', () => {
+    TEMP_DOCUMENTOS.push({ id: uid(), tipo: '', archivoRuta: '', archivoNombre: '', fechaVencimiento: '', fechaCarga: '' });
+    refreshDocumentosTable();
+  });
+
+  document.getElementById('btnGenerarExpediente').addEventListener('click', async () => {
+    const fd = new FormData(document.getElementById('formEmpleado'));
+    const nombreEmp = fd.get('nombre') || 'empleado';
+    const filasDoc = TEMP_DOCUMENTOS.map((d) => {
+      const incluible = d.archivoRuta && /\.(pdf|jpg|jpeg|png)$/i.test(d.archivoRuta);
+      return [d.tipo || '(sin nombre)', d.archivoNombre || '— sin adjuntar —', d.fechaVencimiento ? fmtDate(d.fechaVencimiento) : '—', incluible ? 'Incluido en este PDF' : (d.archivoRuta ? 'No se pudo incrustar — ábralo aparte' : '—')];
+    });
+    const portadaHtml = `<div>
+      ${logoHeaderHTML()}
+      <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Expediente de ${nombreEmp}</h3>
+      <div class="legal">Cédula: ${fd.get('cedula') || '—'} · Cargo: ${fd.get('cargo') || '—'} · Generado el ${fmtDate(todayStr())}</div>
+      <table style="margin-top:12px;"><thead><tr><th>Documento</th><th>Archivo</th><th>Vence el</th><th>Estado</th></tr></thead>
+      <tbody>${filasDoc.map((f) => `<tr>${f.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    </div>`;
+    const documentosParaExport = TEMP_DOCUMENTOS.map((d) => ({ archivoRuta: d.archivoRuta, archivoNombre: d.archivoNombre }));
+    const res = await window.api.expediente.export(portadaHtml, documentosParaExport, `Expediente-${nombreEmp.replace(/\s+/g, '-')}-${todayStr()}.pdf`);
+    if (!res.canceled) toast('Expediente guardado: ' + res.filePath, 'success');
+  });
+
   const btnGenerarContrato = document.getElementById('btnGenerarContrato');
   if (btnGenerarContrato) btnGenerarContrato.addEventListener('click', async () => {
     const fd = new FormData(document.getElementById('formEmpleado'));
@@ -560,7 +749,12 @@ function openEmpModal(emp, rerender) {
     if (!res.canceled) toast('Contrato guardado: ' + res.filePath, 'success');
   });
 
-  document.getElementById('btnCancelEmp').addEventListener('click', closeEmpModal);
+  document.getElementById('btnCancelEmp').addEventListener('click', async () => {
+    // Si era un empleado nuevo y nunca se guardó, no dejar archivos huérfanos
+    // en el disco por los documentos que se hayan alcanzado a adjuntar.
+    if (esNuevo) await window.api.documentos.removeCarpeta(empId);
+    closeEmpModal();
+  });
   document.getElementById('formEmpleado').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -584,7 +778,7 @@ function openEmpModal(emp, rerender) {
           rpe: { hecho: fd.get('egresoTramiteRpeHecho') === 'on', fecha: fd.get('egresoTramiteRpeFecha') || '' }
         }
       },
-      historial: TEMP_HIST, historialIVSS: TEMP_HIST_IVSS,
+      historial: TEMP_HIST, historialIVSS: TEMP_HIST_IVSS, documentos: TEMP_DOCUMENTOS,
       fechaNacimiento: fd.get('fechaNacimiento') || '', nacionalidad: fd.get('nacionalidad') || '',
       sexo: fd.get('sexo') || '', direccion: fd.get('direccion') || '', telefono: fd.get('telefono') || '',
       correo: fd.get('correo') || '', departamento: fd.get('departamento') || '',

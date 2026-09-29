@@ -79,6 +79,30 @@ function wireNotifCenter() {
   });
 }
 
+/* ---------- Barra lateral contraída (solo íconos, para ganar espacio) ---------- */
+function applySidebarCollapsed() {
+  const shell = document.querySelector('.app-shell');
+  if (!shell) return;
+  shell.classList.toggle('sidebar-collapsed', !!state.SIDEBAR_COLLAPSED);
+  const btn = document.getElementById('btnSidebarToggle');
+  if (btn) {
+    const label = state.SIDEBAR_COLLAPSED ? 'Expandir barra lateral' : 'Contraer barra lateral';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+  }
+}
+
+function wireSidebarToggle() {
+  const btn = document.getElementById('btnSidebarToggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    state.SIDEBAR_COLLAPSED = !state.SIDEBAR_COLLAPSED;
+    applySidebarCollapsed();
+    persistAll();
+  });
+  applySidebarCollapsed();
+}
+
 function renderSidebar() {
   const nav = document.getElementById('sidebarNav');
   nav.innerHTML = TABS.map((t) => `
@@ -169,6 +193,7 @@ async function boot() {
   wireMenuActions();
   wireUpdater();
   wireNotifCenter();
+  wireSidebarToggle();
   setInterval(renderNotifBadge, 5 * 60 * 1000); // por si pasa un día abierta y se acerca el cierre de quincena
 
   updateTasaHeaderLabel(state.TASA.valor ? 'cache' : 'loading');

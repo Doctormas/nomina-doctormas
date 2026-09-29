@@ -123,16 +123,22 @@ function corridasHTML() {
   const corridas = corridasGuardadas().slice(0, 30);
   const historicos = corridas.map((c) => {
     const totalNeto = c.filas.reduce((a, f) => a + totalNetoDe(c.kind, f.r), 0);
+    const key = `${c.kind}|${c.tipoPeriodo}|${c.fecha}`;
     return `<tr>
       <td>${tipoLabelDe(c.kind, c.tipoPeriodo)}</td><td>${fmtDate(c.fecha)}</td><td>${c.filas.length}</td><td><b>${fmt(totalNeto, c.fecha)}</b></td>
-      <td class="row-actions">
-        <button class="btn ghost small" data-descargar-resumen="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Resumen (PDF)</button>
-        <button class="btn ghost small" data-descargar-recibos="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Recibos (PDF)</button>
-        ${c.kind === 'bonoalimentacion' ? `<button class="btn ghost small" data-descargar-csv-banco="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV para el banco</button>` : ''}
-        ${c.kind === 'nomina' ? `<button class="btn ghost small" data-descargar-csv-nomina="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV banco (nómina)</button>` : ''}
-        ${(c.kind === 'nomina' && filasConBonoIncluido(c.filas).length) ? `<button class="btn ghost small" data-descargar-csv-bono-inc="${c.kind}|${c.tipoPeriodo}|${c.fecha}">CSV bono alimentación</button>` : ''}
-        <button class="btn danger ghost small" data-eliminar-corrida="${c.kind}|${c.tipoPeriodo}|${c.fecha}">Eliminar</button>
-      </td>
+      <td class="row-actions"><div class="row-actions-inner">
+        <div class="dl-dropdown">
+          <button type="button" class="btn ghost small" data-dl-toggle="${key}">⬇ Descargar ▾</button>
+          <div class="dl-menu" hidden>
+            <button type="button" data-descargar-resumen="${key}">Resumen (PDF)</button>
+            <button type="button" data-descargar-recibos="${key}">Recibos (PDF)</button>
+            ${c.kind === 'bonoalimentacion' ? `<button type="button" data-descargar-csv-banco="${key}">CSV para el banco</button>` : ''}
+            ${c.kind === 'nomina' ? `<button type="button" data-descargar-csv-nomina="${key}">CSV banco (nómina)</button>` : ''}
+            ${(c.kind === 'nomina' && filasConBonoIncluido(c.filas).length) ? `<button type="button" data-descargar-csv-bono-inc="${key}">CSV bono alimentación</button>` : ''}
+          </div>
+        </div>
+        <button type="button" class="btn danger ghost small icon-only" data-eliminar-corrida="${key}" title="Eliminar corrida">✕</button>
+      </div></td>
     </tr>`;
   }).join('');
 
@@ -269,6 +275,22 @@ function wire(root, rerender) {
         cont.querySelector('.btn-row').appendChild(btnCsvBonoInc);
       }
     }
+  });
+
+  // Un solo botón "Descargar" por corrida en vez de un botón por formato —
+  // despliega el menú con las opciones (PDF, CSV según aplique). Se cierra
+  // solo al abrir otro, o al elegir cualquier opción del menú.
+  root.querySelectorAll('[data-dl-toggle]').forEach((btn) => {
+    const menu = btn.nextElementSibling;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const estabaAbierto = !menu.hidden;
+      root.querySelectorAll('.dl-menu').forEach((m) => { m.hidden = true; });
+      menu.hidden = estabaAbierto;
+    });
+  });
+  root.querySelectorAll('.dl-menu').forEach((menu) => {
+    menu.addEventListener('click', () => { menu.hidden = true; });
   });
 
   root.querySelectorAll('[data-descargar-csv-banco]').forEach((b) => {

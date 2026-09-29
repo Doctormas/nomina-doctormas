@@ -62,6 +62,35 @@ export function calcularNotificaciones() {
         texto: `${e.nombre} no tiene tarjeta de bono de alimentación.`
       });
     }
+
+    // Documentos físicos con fecha de vencimiento (pestaña Documentos de la
+    // ficha) — solo se avisa de empleados activos, ya vencidos o a menos de
+    // 30 días de vencer.
+    if (estado === 'activo') {
+      (e.documentos || []).forEach((d) => {
+        if (!d.fechaVencimiento) return;
+        const dias = Math.round((parseDate(d.fechaVencimiento) - parseDate(hoyISO)) / 86400000);
+        if (dias > 30) return;
+        const nombreDoc = d.tipo || 'un documento';
+        const texto = dias < 0
+          ? `${e.nombre}: "${nombreDoc}" venció el ${fmtDate(d.fechaVencimiento)} — actualícelo.`
+          : dias === 0
+            ? `${e.nombre}: "${nombreDoc}" vence hoy.`
+            : `${e.nombre}: "${nombreDoc}" vence en ${dias} día${dias === 1 ? '' : 's'} (${fmtDate(d.fechaVencimiento)}).`;
+        notifs.push({ id: `doc-${e.id}-${d.id}`, tipo: 'documento', severidad: dias < 0 ? 'alta' : 'media', texto });
+      });
+
+      // Expediente incompleto: hay documentos listados en la ficha (pestaña
+      // Documentos) a los que todavía no se les adjunta el archivo — sin
+      // esto completo no se puede generar el expediente en PDF.
+      const faltantes = (e.documentos || []).filter((d) => !d.archivoRuta);
+      if (faltantes.length) {
+        notifs.push({
+          id: `expediente-${e.id}`, tipo: 'expediente', severidad: 'baja',
+          texto: `${e.nombre}: faltan ${faltantes.length} documento${faltantes.length === 1 ? '' : 's'} por adjuntar al expediente (${faltantes.map((d) => d.tipo || 'sin nombre').join(', ')}).`
+        });
+      }
+    }
   });
 
   const periodo = periodoActual(hoyISO);

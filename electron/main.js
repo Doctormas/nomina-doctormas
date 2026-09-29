@@ -6,6 +6,7 @@ const store = require('./store');
 const { renderHtmlToPdfBuffer } = require('./pdf');
 const { construirContratoBuffer } = require('./contrato');
 const XLSX = require('xlsx');
+const { PDFDocument } = require('pdf-lib');
 const updater = require('./updater');
 
 const isDev = process.argv.includes('--dev');
@@ -243,3 +244,87 @@ ipcMain.handle('shell:openExternal', (evt, url) => {
   if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+/* ---------- IPC: Documentos físicos (adjuntos por empleado) ----------
+ * Los archivos NUNCA viajan dentro del JSON de datos (lo dejaría enorme y
+ * rompería la sincronización) — se copian aparte, en una carpeta propia
+ * dentro de los datos de la app, y solo la RUTA queda guardada en la ficha
+ * del empleado. Por eso estos archivos quedan solo en este computador: no
+ * se comparten al sincronizar con el equipo. */
+function documentosDir(empId) {
+  return path.join(store.dataDir(), 'documentos', String(empId));
+}
+
+ipcMain.handle('documentos:attach', async (evt, { empId, docId }) => {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Adjuntar documento',
+    properties: ['openFile'],
+    filters: [{ name: 'Documentos', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'] }]
+  });
+  if (res.canceled || !res.filePaths.length) return { canceled: true };
+  const origen = res.filePaths[0];
+  const nombreOriginal = path.basename(origen);
+  const dir = documentosDir(empId);
+  fs.mkdirSync(dir, { recursive: true });
+  const destino = path.join(dir, `${docId}_${nombreOriginal}`);
+  fs.copyFileSync(origen, destino);
+  return { canceled: false, archivoRuta: destino, archivoNombre: nombreOriginal };
+});
+
+ipcMain.handle('documentos:removeArchivo', (evt, archivoRuta) => {
+  try { if (archivoRuta && fs.existsSync(archivoRuta)) fs.unlinkSync(archivoRuta); } catch (err) { /* no crítico */ }
+  return true;
+});
+
+ipcMain.handle('documentos:removeCarpeta', (evt, empId) => {
+  try {
+    const dir = documentosDir(empId);
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) { /* no crítico */ }
+  return true;
+});
+
+ipcMain.handle('documentos:existeArchivo', (evt, archivoRuta) => !!(archivoRuta && fs.existsSync(archivoRuta)));
+
+/* ---------- IPC: Expediente (PDF con la portada + todos los documentos adjuntos) ---------- */
+const EXPEDIENTE_PAGE_SIZE = [595.28, 841.89]; // A4 en puntos, igual que la portada (printToPDF)
+
+ipcMain.handle('expediente:export', async (evt, { portadaHtml, documentos, defaultFilename }) => {
+  const portadaBuffer = await renderHtmlToPdfBuffer(portadaHtml, 'Expediente');
+  const out = await PDFDocument.load(portadaBuffer);
+
+  for (const d of documentos || []) {
+    if (!d.archivoRuta || !fs.existsSync(d.archivoRuta)) continue;
+    const ext = path.extname(d.archivoRuta).toLowerCase();
+    try {
+      if (ext === '.pdf') {
+        const bytes = fs.readFileSync(d.archivoRuta);
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        const copiadas = await out.copyPages(src, src.getPageIndices());
+        copiadas.forEach((p) => out.addPage(p));
+      } else if (ext === '.jpg' || ext === '.jpeg' || ext === '.png') {
+        const bytes = fs.readFileSync(d.archivoRuta);
+        const img = ext === '.png' ? await out.embedPng(bytes) : await out.embedJpg(bytes);
+        const pagina = out.addPage(EXPEDIENTE_PAGE_SIZE);
+        const margen = 40;
+        const { width, height } = img.scaleToFit(pagina.getWidth() - margen * 2, pagina.getHeight() - margen * 2);
+        pagina.drawImage(img, { x: (pagina.getWidth() - width) / 2, y: (pagina.getHeight() - height) / 2, width, height });
+      }
+      // Otros formatos (doc/docx) no se pueden incrustar en el PDF — la
+      // portada ya avisa cuáles quedaron fuera, para abrirlos aparte.
+    } catch (err) {
+      // Un documento corrupto/ilegible no debe tumbar todo el expediente —
+      // se omite y sigue con el resto.
+    }
+  }
+
+  const bytesFinal = await out.save();
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Guardar expediente',
+    defaultPath: defaultFilename,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  if (res.canceled || !res.filePath) return { canceled: true };
+  fs.writeFileSync(res.filePath, Buffer.from(bytesFinal));
+  return { canceled: false, filePath: res.filePath };
+});

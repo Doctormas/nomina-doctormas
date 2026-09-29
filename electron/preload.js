@@ -30,6 +30,15 @@ contextBridge.exposeInMainWorld('api', {
     openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
   },
+  documentos: {
+    attach: (empId, docId) => ipcRenderer.invoke('documentos:attach', { empId, docId }),
+    removeArchivo: (archivoRuta) => ipcRenderer.invoke('documentos:removeArchivo', archivoRuta),
+    removeCarpeta: (empId) => ipcRenderer.invoke('documentos:removeCarpeta', empId),
+    existeArchivo: (archivoRuta) => ipcRenderer.invoke('documentos:existeArchivo', archivoRuta)
+  },
+  expediente: {
+    export: (portadaHtml, documentos, defaultFilename) => ipcRenderer.invoke('expediente:export', { portadaHtml, documentos, defaultFilename })
+  },
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion')
   },

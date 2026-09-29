@@ -120,6 +120,9 @@ export const state = {
   TASA: { valor: null, fuente: null, fechaActualizacion: null, manual: false, timestampCache: 0, fuentes: [] },
   SYNC: { url: '', pin: '', actor: '', lastSyncedAt: null, lastUpdatedBy: null, status: 'sin-configurar' },
   DISPLAY_CURRENCY: 'VES',
+  // Preferencia puramente cosmética de este computador (barra lateral
+  // contraída o no) — no se comparte al sincronizar con el equipo.
+  SIDEBAR_COLLAPSED: false,
   CAMBIOS_SIN_SINCRONIZAR: false,
   APPLYING_REMOTE: false,
   // Estado de la búsqueda de actualizaciones (electron-updater) — solo en
@@ -157,6 +160,7 @@ export async function loadState() {
   }
   if (data.SYNC) state.SYNC = Object.assign(state.SYNC, data.SYNC);
   state.DISPLAY_CURRENCY = data.DISPLAY_CURRENCY || 'VES';
+  state.SIDEBAR_COLLAPSED = !!data.SIDEBAR_COLLAPSED;
   state.loaded = true;
 }
 
@@ -170,7 +174,7 @@ function collectStorageDoc() {
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
     PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC,
-    DISPLAY_CURRENCY: state.DISPLAY_CURRENCY
+    DISPLAY_CURRENCY: state.DISPLAY_CURRENCY, SIDEBAR_COLLAPSED: state.SIDEBAR_COLLAPSED
   };
 }
 

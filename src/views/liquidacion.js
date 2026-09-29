@@ -64,10 +64,10 @@ function historialHTML() {
     const emp = state.EMPLEADOS.find((e) => e.id === l.empId);
     return `<tr>
       <td>${emp ? emp.nombre : '—'}</td><td>${fmtDate(l.fecha)}</td><td>${CAUSA_LABELS[l.causa] || l.causa}</td><td><b>${fmt(l.resultado.totalGeneral, l.fecha)}</b></td>
-      <td class="row-actions">
-        <button class="btn ghost small" data-descargar-liq="${l.id}">PDF</button>
-        <button class="btn danger ghost small" data-eliminar-liq="${l.id}">Quitar</button>
-      </td>
+      <td class="row-actions"><div class="row-actions-inner">
+        <button type="button" class="btn ghost small icon-only" data-descargar-liq="${l.id}" title="Descargar PDF">⬇</button>
+        <button type="button" class="btn danger ghost small icon-only" data-eliminar-liq="${l.id}" title="Quitar">✕</button>
+      </div></td>
     </tr>`;
   }).join('');
   return `

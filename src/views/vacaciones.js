@@ -105,12 +105,12 @@ function individualHTML() {
   const historialDisfrute = state.VAC_DISFRUTE.slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 20).map((v) => {
     const emp = state.EMPLEADOS.find((e) => e.id === v.empId);
     return `<tr><td>${emp ? emp.nombre : '—'}</td><td>Año ${v.anoServicio}</td><td>${v.dias}</td><td>${fmtDate(v.fecha)}</td>
-      <td class="row-actions"><button class="btn ghost small" data-descargar-vacdisf="${v.id}">PDF</button><button class="btn danger ghost small" data-eliminar-vacdisf="${v.id}">Quitar</button></td></tr>`;
+      <td class="row-actions"><div class="row-actions-inner"><button type="button" class="btn ghost small icon-only" data-descargar-vacdisf="${v.id}" title="Descargar PDF">⬇</button><button type="button" class="btn danger ghost small icon-only" data-eliminar-vacdisf="${v.id}" title="Quitar">✕</button></div></td></tr>`;
   }).join('');
   const historialPermisos = state.PERMISOS_REMUNERADOS.slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 20).map((p) => {
     const emp = state.EMPLEADOS.find((e) => e.id === p.empId);
     return `<tr><td>${emp ? emp.nombre : '—'}</td><td>${p.dias}</td><td>${fmtDate(p.fecha)}</td>
-      <td class="row-actions"><button class="btn ghost small" data-descargar-permiso="${p.id}">PDF</button><button class="btn danger ghost small" data-eliminar-permiso="${p.id}">Quitar</button></td></tr>`;
+      <td class="row-actions"><div class="row-actions-inner"><button type="button" class="btn ghost small icon-only" data-descargar-permiso="${p.id}" title="Descargar PDF">⬇</button><button type="button" class="btn danger ghost small icon-only" data-eliminar-permiso="${p.id}" title="Quitar">✕</button></div></td></tr>`;
   }).join('');
 
   return `
