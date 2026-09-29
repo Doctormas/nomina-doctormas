@@ -524,14 +524,18 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
 
   // Nómina ordinaria: a diferencia de utilidades/bono vacacional/bono de
   // alimentación (que ya se liquidan aparte, fraccionados, al egresar), un
-  // empleado que egresó A MITAD de este período todavía tiene derecho al
-  // sueldo de los días que sí trabajó — no debe desaparecer de la corrida
-  // solo porque su ficha ya quedó en estado "Egresado". calcularReciboNomina
-  // se encarga de cobrarle solo hasta su fecha de egreso, no el período completo.
+  // empleado que estuvo activo durante ESTE período todavía tiene derecho a
+  // su sueldo — no debe desaparecer de la corrida solo porque HOY su ficha
+  // ya está en estado "Egresado". Esto incluye generar/regenerar un período
+  // PASADO después de que la persona ya se fue: si egresó DESPUÉS del cierre
+  // de este período, estuvo activa los 15/30 días completos (no hace falta
+  // que su egreso caiga justo dentro de las fechas de este período) —
+  // calcularReciboNomina se encarga de cobrarle solo hasta su fecha de
+  // egreso cuando sí cae dentro, o el período completo si egresó después.
   const { desde: periodoDesde } = periodoNominal(tipoPeriodo, fechaPeriodoISO);
   let egresadosDelPeriodo = state.EMPLEADOS.filter((e) =>
     e.activo === false && e.egreso && e.egreso.fecha &&
-    e.egreso.fecha >= periodoDesde && e.egreso.fecha <= fechaPeriodoISO &&
+    e.egreso.fecha >= periodoDesde &&
     e.fechaIngreso && e.fechaIngreso <= fechaPeriodoISO
   );
   if (departamento) egresadosDelPeriodo = egresadosDelPeriodo.filter((e) => (e.departamento || '') === departamento);
