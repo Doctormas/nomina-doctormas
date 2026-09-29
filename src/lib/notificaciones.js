@@ -3,23 +3,23 @@
 // queda desactualizado ni hay que migrar datos viejos.
 import { state } from '../state/store.js';
 import { estadoDe } from '../views/empleados.js';
+import { periodoNominal } from './calculos.js';
 import { todayStr, parseDate, fmtDate } from './formato.js';
 
 function esBancamiga(banco) {
   return !!(banco && banco.toLowerCase().includes('bancamiga'));
 }
 
-// Quincena/cierre de mes en el que cae "hoy", y su fecha de fin — para poder
-// avisar "se acerca nómina" sin tener que abrir la pestaña Nómina a revisar.
+// Quincena/cierre de mes en el que cae "hoy", con su rango completo (no solo
+// la fecha de cierre) — "Fecha de corte" al correr nómina casi nunca es
+// exacto el día 15 o el último del mes (por defecto es "hoy"), así que para
+// saber si YA se corrió este período hay que comparar por rango, no por
+// fecha exacta.
 function periodoActual(hoyISO) {
-  const hoy = parseDate(hoyISO);
-  const anio = hoy.getFullYear();
-  const mes = hoy.getMonth();
-  if (hoy.getDate() <= 15) {
-    return { tipoPeriodo: 'primera', label: 'primera quincena', fecha: new Date(anio, mes, 15).toISOString().slice(0, 10) };
-  }
-  const finMes = new Date(anio, mes + 1, 0);
-  return { tipoPeriodo: 'segunda', label: 'segunda quincena / cierre de mes', fecha: finMes.toISOString().slice(0, 10) };
+  const tipoPeriodo = parseDate(hoyISO).getDate() <= 15 ? 'primera' : 'segunda';
+  const label = tipoPeriodo === 'primera' ? 'primera quincena' : 'segunda quincena / cierre de mes';
+  const { desde, hasta } = periodoNominal(tipoPeriodo, hoyISO);
+  return { tipoPeriodo, label, desde, fecha: hasta };
 }
 
 export function calcularNotificaciones() {
@@ -94,7 +94,7 @@ export function calcularNotificaciones() {
   });
 
   const periodo = periodoActual(hoyISO);
-  const yaCorrida = state.PERIODOS.some((p) => p.tipoPeriodo === periodo.tipoPeriodo && p.fecha === periodo.fecha);
+  const yaCorrida = state.PERIODOS.some((p) => p.tipoPeriodo === periodo.tipoPeriodo && p.fecha >= periodo.desde && p.fecha <= periodo.fecha);
   if (!yaCorrida) {
     const diasRestantes = Math.round((parseDate(periodo.fecha) - parseDate(hoyISO)) / 86400000);
     if (diasRestantes <= 3) {
