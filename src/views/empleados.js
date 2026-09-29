@@ -114,13 +114,14 @@ function wire(root, rerender) {
       });
       if (!ok) return;
       const id = b.dataset.delEmp;
+      const empBorrado = state.EMPLEADOS.find((e) => e.id === id);
       state.EMPLEADOS = state.EMPLEADOS.filter((e) => e.id !== id);
       state.VAC_DISFRUTE = state.VAC_DISFRUTE.filter((v) => v.empId !== id);
       state.PERMISOS_REMUNERADOS = state.PERMISOS_REMUNERADOS.filter((p) => p.empId !== id);
       state.UTILIDADES_PAGADAS = state.UTILIDADES_PAGADAS.filter((u) => u.empId !== id);
       state.BONO_VAC_PAGADO = state.BONO_VAC_PAGADO.filter((x) => x.empId !== id);
       state.PERIODOS = state.PERIODOS.filter((p) => p.empId !== id);
-      await persistAll();
+      await persistAll(`Empleado eliminado: ${empBorrado ? empBorrado.nombre : id}`);
       rerender();
     });
   });
@@ -604,8 +605,9 @@ function openEmpModal(emp, rerender) {
       beneficiosAdicionales: fd.get('beneficiosAdicionales') || '', clausulasAdicionales: fd.get('clausulasAdicionales') || ''
     };
     const idx = state.EMPLEADOS.findIndex((x) => x.id === id);
+    const esNuevo = idx < 0;
     if (idx >= 0) state.EMPLEADOS[idx] = nuevo; else state.EMPLEADOS.push(nuevo);
-    await persistAll();
+    await persistAll(`${esNuevo ? 'Empleado creado' : 'Ficha editada'}: ${nuevo.nombre}`);
     closeEmpModal();
     toast('Empleado guardado.', 'success');
     rerender();
@@ -719,7 +721,7 @@ async function confirmarImportacionBulk(rerender) {
     });
     importados++;
   });
-  await persistAll();
+  await persistAll(`Carga masiva: ${importados} empleados importados`);
   toast(`Se importaron ${importados} empleados.`, 'success');
   closeBulkModal();
   rerender();

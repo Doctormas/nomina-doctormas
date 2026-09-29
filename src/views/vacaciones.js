@@ -236,7 +236,7 @@ function wire(root, rerender) {
         if (permisoDias > 0) {
           state.PERMISOS_REMUNERADOS.push({ id: uid(), empId, dias: permisoDias, fecha });
         }
-        await persistAll();
+        await persistAll(`Disfrute de vacaciones registrado: ${emp.nombre} (${diasTotales} días)`);
         toast('Disfrute de vacaciones registrado en el historial.', 'success');
         rerender();
       }
@@ -338,7 +338,7 @@ function wire(root, rerender) {
         if (permisoDias > 0) state.PERMISOS_REMUNERADOS.push({ id: uid(), empId: emp.id, dias: permisoDias, fecha });
         registrados.push({ emp, asignaciones, permisoDias });
       });
-      await persistAll();
+      await persistAll(`Vacaciones colectivas registradas: ${registrados.length} empleados (${fecha})`);
       const filasHtml = registrados.map((r) => {
         const detalle = coberturaTexto(r.asignaciones, r.permisoDias);
         const totalDias = r.asignaciones.reduce((a, x) => a + x.dias, 0) + r.permisoDias;
@@ -379,7 +379,7 @@ function wire(root, rerender) {
       const ok = await confirmDialog({ title: 'Eliminar registro', message: `¿Eliminar este registro de disfrute de vacaciones${emp ? ' de ' + emp.nombre : ''}? Esta acción no se puede deshacer.`, confirmLabel: 'Eliminar', danger: true });
       if (!ok) return;
       state.VAC_DISFRUTE = state.VAC_DISFRUTE.filter((x) => x.id !== b.dataset.eliminarVacdisf);
-      await persistAll();
+      await persistAll(`Disfrute de vacaciones eliminado: ${emp ? emp.nombre : v.empId}`);
       rerender();
     });
   });
@@ -405,7 +405,7 @@ function wire(root, rerender) {
       const ok = await confirmDialog({ title: 'Eliminar registro', message: `¿Eliminar este permiso remunerado${emp ? ' de ' + emp.nombre : ''}? Esta acción no se puede deshacer.`, confirmLabel: 'Eliminar', danger: true });
       if (!ok) return;
       state.PERMISOS_REMUNERADOS = state.PERMISOS_REMUNERADOS.filter((x) => x.id !== b.dataset.eliminarPermiso);
-      await persistAll();
+      await persistAll(`Permiso remunerado eliminado: ${emp ? emp.nombre : p.empId}`);
       rerender();
     });
   });

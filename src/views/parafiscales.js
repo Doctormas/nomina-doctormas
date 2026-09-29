@@ -218,7 +218,7 @@ function wire(root) {
     const btnAplicarARI = cont.querySelector('#btnAplicarARI');
     if (btnAplicarARI) btnAplicarARI.addEventListener('click', async () => {
       emp.islrPorcentaje = r.porcentaje;
-      await persistAll();
+      await persistAll(`ISLR (AR-I) aplicado: ${emp.nombre} → ${r.porcentaje}%`);
       toast(`% de ISLR de ${emp.nombre} actualizado a ${r.porcentaje}%.`, 'success');
     });
 

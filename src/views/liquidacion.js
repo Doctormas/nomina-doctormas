@@ -132,7 +132,7 @@ function wire(root, rerender) {
             rpe: tramitesPrevios.rpe || { hecho: false, fecha: '' }
           }
         };
-        await persistAll();
+        await persistAll(`Liquidación registrada: ${emp.nombre} (${CAUSA_LABELS[causa] || causa})`);
         toast('Liquidación guardada. El empleado quedó marcado como Egresado — recuerde desincorporarlo del IVSS y demás entes (pestaña Egreso de su ficha).', 'success');
         rerender();
       }
@@ -157,7 +157,7 @@ function wire(root, rerender) {
       const ok = await confirmDialog({ title: 'Eliminar liquidación', message: `¿Eliminar esta liquidación${emp ? ' de ' + emp.nombre : ''}? Esta acción no se puede deshacer.`, confirmLabel: 'Eliminar', danger: true });
       if (!ok) return;
       state.LIQUIDACIONES = state.LIQUIDACIONES.filter((x) => x.id !== b.dataset.eliminarLiq);
-      await persistAll();
+      await persistAll(`Liquidación eliminada: ${emp ? emp.nombre : l.empId}`);
       rerender();
     });
   });

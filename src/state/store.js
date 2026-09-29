@@ -102,6 +102,17 @@ export const state = {
   HISTORICO_TASAS: [],
   BONO_VAC_PAGADO: [],
   BONO_ALIM_PAGADO: [],
+  // Historial de modificaciones (quién, cuándo, qué sección) — ver
+  // registrarCambio() más abajo. Se comparte igual que el resto de los datos
+  // al sincronizar, así cada equipo ve también lo que hizo el otro.
+  HISTORIAL_CAMBIOS: [],
+  // Copias completas de los datos justo después de cada guardado importante
+  // (ver registrarCambio()), para poder "Restaurar a este punto" desde
+  // Configuración → Historial. A diferencia de HISTORIAL_CAMBIOS, esto SÍ
+  // pesa (son los datos completos, no solo el renglón del log) — por eso se
+  // guardan solo las últimas MAX_RESPALDOS_AUTO y NO se comparten al
+  // sincronizar con el equipo (quedan solo en este computador).
+  RESPALDOS_AUTO: [],
   // Correlativo único para el "N° de recibo" de todo recibo de pago que se
   // guarda en el historial (nómina, utilidades, bono vacacional) — nunca se
   // reutiliza ni se reinicia, aunque se borre un registro después.
@@ -134,6 +145,8 @@ export async function loadState() {
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
+  state.RESPALDOS_AUTO = data.RESPALDOS_AUTO || [];
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
   if (data.TASA) state.TASA = Object.assign(state.TASA, data.TASA);
   if (state.TASA.fuentes && state.TASA.fuentes.length) {
@@ -153,10 +166,78 @@ function collectStorageDoc() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
+    HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
+    PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC,
     DISPLAY_CURRENCY: state.DISPLAY_CURRENCY
   };
+}
+
+// Tope simple para que el historial no crezca indefinidamente en el archivo
+// guardado — con 300 movimientos sobra para meses de uso normal.
+const MAX_HISTORIAL_CAMBIOS = 300;
+
+// Los respaldos SÍ pesan (son los datos completos, no un renglón de texto),
+// así que aquí el tope es mucho más chico — alcanza para volver atrás de un
+// error reciente, sin que el archivo guardado crezca sin control.
+export const MAX_RESPALDOS_AUTO = 25;
+
+function idCorto() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/** Registra un renglón en el Historial de modificaciones (Configuración →
+ * Historial): quién (el nombre puesto en Nube → "Tu nombre", o "Sin nombre"
+ * si no se ha puesto), cuándo, y una descripción corta de qué se guardó —
+ * y de paso guarda una copia completa de los datos en RESPALDOS_AUTO, para
+ * poder "Restaurar a este punto" después. Se llama justo antes de guardar —
+ * nunca desde acciones automáticas (tasa del día, sincronización en sí) para
+ * no llenar esto de ruido ni de copias innecesarias. */
+function registrarCambio(seccion) {
+  const id = idCorto();
+  const fecha = new Date().toISOString();
+  const actor = state.SYNC.actor || 'Sin nombre';
+  state.HISTORIAL_CAMBIOS.unshift({ id, fecha, actor, seccion });
+  if (state.HISTORIAL_CAMBIOS.length > MAX_HISTORIAL_CAMBIOS) state.HISTORIAL_CAMBIOS.length = MAX_HISTORIAL_CAMBIOS;
+
+  state.RESPALDOS_AUTO.unshift({ id, fecha, actor, seccion, datos: collectFullState() });
+  if (state.RESPALDOS_AUTO.length > MAX_RESPALDOS_AUTO) state.RESPALDOS_AUTO.length = MAX_RESPALDOS_AUTO;
+}
+
+/** Restaura todos los datos a como estaban justo después de un guardado
+ * anterior (un renglón de RESPALDOS_AUTO, identificado por su id). Devuelve
+ * false si ese punto ya no está disponible (se venció el tope de copias). */
+export async function restaurarRespaldoAuto(id) {
+  const snap = state.RESPALDOS_AUTO.find((s) => s.id === id);
+  if (!snap) return false;
+  const dt = new Date(snap.fecha);
+  const fechaTxt = dt.toLocaleDateString('es-VE') + ' ' + dt.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+
+  // Antes de sobrescribir nada, se deja un punto de restauración con el
+  // estado actual — así, si la restauración misma fue un error, se puede
+  // volver a este mismo momento.
+  registrarCambio(`Antes de restaurar a "${snap.seccion}" (${fechaTxt})`);
+
+  const data = snap.datos;
+  state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
+  corregirNombreEmpresa();
+  state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
+    ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
+    : defaultConfig().tiposNomina;
+  state.EMPLEADOS = data.EMPLEADOS || [];
+  state.PERIODOS = data.PERIODOS || [];
+  state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
+  state.PERMISOS_REMUNERADOS = data.PERMISOS_REMUNERADOS || [];
+  state.UTILIDADES_PAGADAS = data.UTILIDADES_PAGADAS || [];
+  state.LIQUIDACIONES = data.LIQUIDACIONES || [];
+  state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
+  state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+  state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  // Nunca hacia atrás — no se reutiliza un N° de recibo ya entregado.
+  state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);
+  await persistAll(`Restaurado a un punto anterior: "${snap.seccion}" (${fechaTxt})`);
+  return true;
 }
 
 /** Asigna y devuelve el siguiente N° de recibo: correlativo simple (1, 2, 3…),
@@ -169,7 +250,12 @@ export function tomarNumeroRecibo() {
   return String(n);
 }
 
-export async function persistAll() {
+/** @param {string} [seccion] Descripción corta de qué se guardó (ej. "Ficha
+ * editada: Juan Pérez") — si se pasa, queda en el Historial de
+ * modificaciones. Se omite en guardados automáticos/internos (tasa del día,
+ * la sincronización en sí) para que el historial solo muestre cambios reales. */
+export async function persistAll(seccion) {
+  if (seccion) registrarCambio(seccion);
   await window.api.store.save(collectStorageDoc());
   if (syncConfigured() && !state.APPLYING_REMOTE) marcarCambiosSinSincronizar();
 }
@@ -182,7 +268,8 @@ export function collectFullState() {
     VAC_DISFRUTE: state.VAC_DISFRUTE, PERMISOS_REMUNERADOS: state.PERMISOS_REMUNERADOS,
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
+    HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
   };
 }
 
@@ -203,6 +290,7 @@ export async function applyFullState(data) {
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
   // El mayor entre lo local y lo remoto — nunca retrocede el correlativo,
   // aunque el otro equipo no lo haya subido en esta sincronización.
   state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);

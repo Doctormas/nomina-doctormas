@@ -34,7 +34,7 @@ export async function importBackup(onDone) {
     state.LIQUIDACIONES = data.LIQUIDACIONES || [];
     state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
     state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
-    await persistAll();
+    await persistAll('Respaldo restaurado desde archivo');
     toast('Respaldo importado correctamente.', 'success');
     if (onDone) onDone();
     return true;

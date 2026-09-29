@@ -1,4 +1,4 @@
-import { state, persistAll, registrarTasaHistorica, syncConfigured } from '../state/store.js';
+import { state, persistAll, registrarTasaHistorica, syncConfigured, restaurarRespaldoAuto, MAX_RESPALDOS_AUTO } from '../state/store.js';
 import { fetchTasaBCV, fetchTasaPorFecha, importarHistoricoCompleto } from '../lib/tasa.js';
 import { syncConnect, syncPull, syncPush } from '../lib/sync.js';
 import { fmtNum, fmtDate, todayStr } from '../lib/formato.js';
@@ -13,6 +13,7 @@ const MODULOS = [
   { id: 'nube', label: 'Nube' },
   { id: 'parametros', label: 'Parámetros' },
   { id: 'nomina', label: 'Nómina' },
+  { id: 'historial', label: 'Historial' },
   { id: 'actualizaciones', label: 'Actualizaciones' }
 ];
 let MODULO_ACTIVO = 'tasas';
@@ -39,8 +40,29 @@ function moduloHTML(modulo) {
   if (modulo === 'nube') return nubeHTML();
   if (modulo === 'parametros') return parametrosHTML();
   if (modulo === 'nomina') return nominaHTML();
+  if (modulo === 'historial') return historialHTML();
   if (modulo === 'actualizaciones') return actualizacionesHTML();
   return '';
+}
+
+function historialHTML() {
+  const idsConRespaldo = new Set(state.RESPALDOS_AUTO.map((s) => s.id));
+  const rows = state.HISTORIAL_CAMBIOS.slice(0, 200).map((h) => {
+    const d = new Date(h.fecha);
+    const fechaTxt = isNaN(d) ? '—' : d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+    const puedeRestaurar = idsConRespaldo.has(h.id);
+    return `<tr><td>${fechaTxt}</td><td>${h.actor || 'Sin nombre'}</td><td>${h.seccion}</td>
+      <td>${puedeRestaurar ? `<button type="button" class="btn ghost small" data-restaurar-punto="${h.id}">↩ Restaurar</button>` : ''}</td></tr>`;
+  }).join('');
+  return `
+  <div class="card">
+    <h2>Historial de modificaciones</h2>
+    <div class="desc">Quién guardó qué y cuándo — ficha de empleados, nómina, vacaciones, liquidaciones, parafiscales y parámetros de configuración. El "quién" es el nombre puesto en <b>Nube → Tu nombre</b>; si no lo ha puesto, sale como "Sin nombre". Si sincroniza con su equipo en la nube, este historial también se comparte, así cada quien ve lo que hizo el otro.</div>
+    <div class="note">¿Se equivocó en algo? Los últimos ${MAX_RESPALDOS_AUTO} guardados tienen botón <b>↩ Restaurar</b> — devuelve TODOS los datos (empleados, nómina, vacaciones, liquidaciones, configuración) a como estaban justo después de ese guardado. Los guardados más viejos ya no lo tienen, para no ocupar espacio de más — y estas copias completas quedan solo en este computador, no se comparten al sincronizar con su equipo.</div>
+    <div class="table-wrap"><table><thead><tr><th>Fecha y hora</th><th>Quién</th><th>Qué se guardó</th><th></th></tr></thead>
+    <tbody>${rows || '<tr class="empty-row"><td colspan="4">Sin movimientos registrados todavía.</td></tr>'}</tbody></table></div>
+    ${state.HISTORIAL_CAMBIOS.length ? '<button class="btn danger ghost" id="btnVaciarHistorialCambios" style="margin-top:12px;">Vaciar historial</button>' : ''}
+  </div>`;
 }
 
 function actualizacionesHTML() {
@@ -331,8 +353,37 @@ function wire(root, rerender) {
     });
     if (!ok) return;
     state.HISTORICO_TASAS = [];
+    await persistAll('Histórico de tasas eliminado por completo');
+    rerender();
+  });
+  const btnVaciarHistorialCambios = root.querySelector('#btnVaciarHistorialCambios');
+  if (btnVaciarHistorialCambios) btnVaciarHistorialCambios.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'Vaciar historial de modificaciones',
+      message: `¿Eliminar los ${state.HISTORIAL_CAMBIOS.length} movimientos del historial? También se pierden los puntos de restauración guardados. Esta acción no se puede deshacer y, si sincroniza con su equipo, el historial también se borra para ellos.`,
+      confirmLabel: 'Vaciar', danger: true
+    });
+    if (!ok) return;
+    state.HISTORIAL_CAMBIOS = [];
+    state.RESPALDOS_AUTO = [];
     await persistAll();
     rerender();
+  });
+  root.querySelectorAll('[data-restaurar-punto]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const id = b.dataset.restaurarPunto;
+      const snap = state.RESPALDOS_AUTO.find((s) => s.id === id);
+      const ok = await confirmDialog({
+        title: 'Restaurar a un punto anterior',
+        message: `¿Restaurar TODOS los datos (empleados, nómina, vacaciones, liquidaciones, configuración) a como estaban justo después de "${snap ? snap.seccion : ''}"? Se perderá cualquier cambio hecho después de ese punto. Queda un nuevo punto de restauración con el estado actual antes de restaurar, por si se equivoca.`,
+        confirmLabel: 'Restaurar', danger: true
+      });
+      if (!ok) return;
+      const restaurado = await restaurarRespaldoAuto(id);
+      if (restaurado) toast('Datos restaurados correctamente.', 'success');
+      else toast('Ese punto ya no está disponible para restaurar.', 'error');
+      rerender();
+    });
   });
   const btnDiagFecha = root.querySelector('#btnDiagFecha');
   if (btnDiagFecha) btnDiagFecha.addEventListener('click', async () => {
@@ -393,7 +444,7 @@ function wire(root, rerender) {
         if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula') state.CONFIG[k] = v;
         else state.CONFIG[k] = Number(v);
       }
-      await persistAll();
+      await persistAll('Parámetros de configuración modificados');
       toast('Parámetros guardados.', 'success');
       rerender();
     });
@@ -412,7 +463,7 @@ function wire(root, rerender) {
           incluyeDeducciones: fd.get(`tn_${key}_ded`) === 'on'
         };
       });
-      await persistAll();
+      await persistAll('Tipos de nómina modificados');
       toast('Tipos de nómina guardados.', 'success');
       rerender();
     });

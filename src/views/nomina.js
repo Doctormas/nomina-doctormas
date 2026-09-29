@@ -208,14 +208,14 @@ function wire(root, rerender) {
           filas.forEach(({ emp, r }) => {
             state.PERIODOS.push({ id: uid(), empId: emp.id, tipoPeriodo: tipo, fecha, resultado: r, numeroRecibo: tomarNumeroRecibo() });
           });
-          await persistAll();
+          await persistAll(`Nómina guardada: ${filas.length} recibos (${fecha})`);
           toast(`Corrida guardada: ${filas.length} recibos agregados al historial.`, 'success');
         } else if (kind === 'utilidades') {
           const ano = Number(fecha.slice(0, 4));
           filas.forEach(({ emp, r }) => {
             state.UTILIDADES_PAGADAS.push({ id: uid(), empId: emp.id, ano, fecha, resultado: r, numeroRecibo: tomarNumeroRecibo() });
           });
-          await persistAll();
+          await persistAll(`Utilidades guardadas: ${filas.length} pagos (${fecha})`);
           toast(`Utilidades guardadas: ${filas.length} pagos agregados al historial.`, 'success');
         } else if (kind === 'bonovacacional') {
           let omitidos = 0;
@@ -223,7 +223,7 @@ function wire(root, rerender) {
             if (r.yaPagado) { omitidos++; return; }
             state.BONO_VAC_PAGADO.push({ id: uid(), empId: emp.id, anoServicio, dias: r.dias, fecha, monto: r.monto, numeroRecibo: tomarNumeroRecibo() });
           });
-          await persistAll();
+          await persistAll(`Bono vacacional guardado (${fecha})`);
           toast(`Bono vacacional guardado: ${filas.length - omitidos} pagos agregados${omitidos ? ` (${omitidos} omitidos por ya estar pagados)` : ''}.`, 'success');
         } else if (kind === 'bonoalimentacion') {
           let omitidos = 0;
@@ -231,7 +231,7 @@ function wire(root, rerender) {
             if (r.yaPagado) { omitidos++; return; }
             state.BONO_ALIM_PAGADO.push({ id: uid(), empId: emp.id, fecha, monto: r.monto, numeroRecibo: tomarNumeroRecibo() });
           });
-          await persistAll();
+          await persistAll(`Bono de alimentación guardado (${fecha})`);
           toast(`Bono de alimentación guardado: ${filas.length - omitidos} pagos agregados${omitidos ? ` (${omitidos} omitidos por ya estar pagados este mes)` : ''}. Las nóminas de este mes ya no lo incluirán.`, 'success');
         }
         rerender();
@@ -332,7 +332,7 @@ function wire(root, rerender) {
       else if (kind === 'utilidades') state.UTILIDADES_PAGADAS = state.UTILIDADES_PAGADAS.filter((u) => u.fecha !== fecha);
       else if (kind === 'bonovacacional') state.BONO_VAC_PAGADO = state.BONO_VAC_PAGADO.filter((b2) => b2.fecha !== fecha);
       else if (kind === 'bonoalimentacion') state.BONO_ALIM_PAGADO = state.BONO_ALIM_PAGADO.filter((b2) => b2.fecha !== fecha);
-      await persistAll();
+      await persistAll(`Corrida eliminada: ${tipoLabelDe(kind, tipoPeriodo)} del ${fmtDate(fecha)}`);
       rerender();
     });
   });
