@@ -62,7 +62,7 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
       <table style="margin-top:6px;">
         <thead><tr><th>Devengado</th><th>Salario diario</th><th>Días</th><th>Total</th></tr></thead>
         <tbody>
-          <tr><td>Salario del período${r.periodoParcial ? ' (parcial — ingresó a mitad del período)' : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
+          <tr><td>Salario del período${r.periodoParcial ? (r.periodoParcialPorEgreso ? ' (parcial — egresó a mitad del período)' : ' (parcial — ingresó a mitad del período)') : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
           <tr><td>Bono de alimentación (no salarial)${r.bonoAlimPagadoAparte ? ' — pagado por separado este mes' : ''}</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
           <tr><td><b>Total devengado</b></td><td></td><td></td><td><b>${fmt(r.totalDevengado, fecha)}</b></td></tr>
         </tbody>
@@ -190,7 +190,7 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
     };
   }
   const filasHtml = filas.map(({ emp, r }) => `<tr>
-    <td>${emp ? emp.nombre : '—'}${r.inscritoIVSS ? '' : ' <span class="tag err">no inscrito IVSS</span>'}</td>
+    <td>${emp ? emp.nombre : '—'}${r.inscritoIVSS ? '' : ' <span class="tag err">no inscrito IVSS</span>'}${r.periodoParcialPorEgreso ? ' <span class="tag err">egresó</span>' : ''}</td>
     <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
     <td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
     <td><b>${fmt(r.neto, fecha)}</b></td><td>${fmt(r.aportesPatronales, fecha)}</td>

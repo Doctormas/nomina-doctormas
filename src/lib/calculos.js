@@ -286,12 +286,27 @@ export function calcularBonoVacacional(emp, anoServicio, fechaPagoISO) {
   return { dias, salario, salarioDiario, monto, yaPagado };
 }
 
+// Si el empleado ya egresó (Liquidación) y su fecha de egreso cae ANTES del
+// cierre de este período, no se le puede contar como si hubiera seguido
+// trabajando hasta el final — el período efectivo para él termina el día
+// de su egreso, no en fechaPeriodoISO. Esto NO cambia la fecha que se usa
+// para tasa de cambio, ISLR, etc. (todo el recibo sigue "fechado" el mismo
+// día que el resto de la corrida) — solo cuántos días de sueldo/base de
+// deducciones se le cuentan.
+function fechaFinEfectivaPeriodo(emp, fechaPeriodoISO) {
+  if (emp.activo === false && emp.egreso && emp.egreso.fecha && emp.egreso.fecha < fechaPeriodoISO) {
+    return emp.egreso.fecha;
+  }
+  return fechaPeriodoISO;
+}
+
 /* ---------- Nómina (período) ---------- */
 export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const cfg = tipoNominaCfg(tipoKey);
   const salarioMensual = salarioVigente(emp, fechaPeriodoISO);
   const salarioDiario = salarioMensual / 30;
   const diasConfigurados = cfg.diasSueldo;
+  const finEfectivo = fechaFinEfectivaPeriodo(emp, fechaPeriodoISO);
   // Si ya se le pagó el bono de alimentación de este mes en su propia corrida
   // (tipo de nómina "Bono de alimentación"), esta nómina normal no lo incluye
   // de nuevo — se paga una sola vez por mes.
@@ -301,10 +316,11 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   // Si el empleado ingresó a mitad de este período (o, para el primer mes de
   // Doctormás, la empresa misma empezó a mitad de mes — 17/04/2023), no se
   // paga como si hubiera trabajado el período completo: se prorratea a los
-  // días reales trabajados dentro de este período (quincena o mes).
+  // días reales trabajados dentro de este período (quincena o mes). Lo
+  // mismo si egresó antes de que cerrara el período (finEfectivo).
   const inicioVentanaPeriodo = sumarDias(fechaPeriodoISO, -(diasConfigurados - 1));
   const inicioRealPeriodo = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaPeriodo ? emp.fechaIngreso : inicioVentanaPeriodo;
-  const diasPeriodo = Math.min(diasEntreInclusive(inicioRealPeriodo, fechaPeriodoISO), diasConfigurados);
+  const diasPeriodo = Math.min(diasEntreInclusive(inicioRealPeriodo, finEfectivo), diasConfigurados);
 
   const salarioNormalPeriodo = salarioDiario * diasPeriodo;
 
@@ -329,7 +345,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   if (cfg.incluyeDeducciones) {
     const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
     const inicioRealMes = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
-    const diasMes = Math.min(diasEntreInclusive(inicioRealMes, fechaPeriodoISO), 30);
+    const diasMes = Math.min(diasEntreInclusive(inicioRealMes, finEfectivo), 30);
     const salarioMesBase = salarioDiario * diasMes;
 
     const fraccionMes = diasMes / 30;
@@ -396,6 +412,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     inscritoIVSS: emp.inscritoIVSS !== false,
     ivssBaseDeclarada,
     periodoParcial: diasPeriodo < diasConfigurados,
+    periodoParcialPorEgreso: diasPeriodo < diasConfigurados && finEfectivo !== fechaPeriodoISO,
     periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
     ivssTrab, rpeTrab, faovTrab, islrTrab, totalDeducciones, totalDevengado, neto,
@@ -505,7 +522,22 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
     return { filas, totales, kind: 'bonovacacional' };
   }
 
-  const filas = activos.map((emp) => ({ emp, kind: 'nomina', r: calcularReciboNomina(emp, tipoPeriodo, fechaPeriodoISO) }));
+  // Nómina ordinaria: a diferencia de utilidades/bono vacacional/bono de
+  // alimentación (que ya se liquidan aparte, fraccionados, al egresar), un
+  // empleado que egresó A MITAD de este período todavía tiene derecho al
+  // sueldo de los días que sí trabajó — no debe desaparecer de la corrida
+  // solo porque su ficha ya quedó en estado "Egresado". calcularReciboNomina
+  // se encarga de cobrarle solo hasta su fecha de egreso, no el período completo.
+  const { desde: periodoDesde } = periodoNominal(tipoPeriodo, fechaPeriodoISO);
+  let egresadosDelPeriodo = state.EMPLEADOS.filter((e) =>
+    e.activo === false && e.egreso && e.egreso.fecha &&
+    e.egreso.fecha >= periodoDesde && e.egreso.fecha <= fechaPeriodoISO &&
+    e.fechaIngreso && e.fechaIngreso <= fechaPeriodoISO
+  );
+  if (departamento) egresadosDelPeriodo = egresadosDelPeriodo.filter((e) => (e.departamento || '') === departamento);
+  const activosNomina = activos.concat(egresadosDelPeriodo);
+
+  const filas = activosNomina.map((emp) => ({ emp, kind: 'nomina', r: calcularReciboNomina(emp, tipoPeriodo, fechaPeriodoISO) }));
   const totales = filas.reduce((a, f) => ({
     devengado: a.devengado + f.r.totalDevengado, deducciones: a.deducciones + f.r.totalDeducciones,
     neto: a.neto + f.r.neto, aportes: a.aportes + f.r.aportesPatronales
