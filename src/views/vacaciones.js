@@ -121,6 +121,7 @@ function individualHTML() {
       <div class="field"><label>Empleado</label><select id="vacDisfEmp">${opciones}</select></div>
       <div class="field"><label>Total de días a disfrutar</label><input type="number" id="vacDisfDias" value="15"></div>
       <div class="field"><label>Fecha de inicio del disfrute</label><input type="date" id="vacDisfFecha" value="${todayStr()}"></div>
+      <div class="field" style="grid-column:1 / -1;"><label>Observaciones (opcional)</label><textarea id="vacDisfObservaciones" rows="2" placeholder="Se imprime en el comprobante — ej. disfrute fraccionado, acuerdo especial, etc."></textarea></div>
     </div>
     <button class="btn" id="btnRegistrarVac" style="margin-top:10px;">Calcular</button>
     <div id="vacDisfResultado"></div>
@@ -204,6 +205,7 @@ function wire(root, rerender) {
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
     const diasTotales = Number(root.querySelector('#vacDisfDias').value);
     const fecha = root.querySelector('#vacDisfFecha').value;
+    const observaciones = root.querySelector('#vacDisfObservaciones').value.trim();
     if (!diasTotales) { toast('Ingrese cuántos días se toma.', 'error'); return; }
 
     // Calcular es solo una vista previa — todavía no se guarda nada. El
@@ -213,7 +215,8 @@ function wire(root, rerender) {
     const filasReparto = asignaciones.map((a) => [`Año de servicio ${a.anoServicio}`, `${a.dias} días`]);
     if (permisoDias > 0) filasReparto.push(['Permiso remunerado (no descuenta ningún año)', `${permisoDias} días`]);
     const contenidoHtml = comprobante(`${empresaConRif()} — Comprobante de disfrute de vacaciones`, [
-      ['Empleado', emp.nombre], ['Fecha de inicio', fmtDate(fecha)], ['Total de días', diasTotales], ...filasReparto
+      ['Empleado', emp.nombre], ['Fecha de inicio', fmtDate(fecha)], ['Total de días', diasTotales], ...filasReparto,
+      ...(observaciones ? [['Observaciones', observaciones]] : [])
     ]) + (avisos.length ? `<div class="note" style="margin-top:10px;">${avisos.join('<br><br>')}</div>` : '');
 
     const cont = root.querySelector('#vacDisfResultado');
@@ -231,7 +234,7 @@ function wire(root, rerender) {
           if (!ok) return;
         }
         asignaciones.forEach(({ anoServicio, dias }) => {
-          state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha });
+          state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha, observaciones });
         });
         if (permisoDias > 0) {
           state.PERMISOS_REMUNERADOS.push({ id: uid(), empId, dias: permisoDias, fecha });
@@ -366,7 +369,8 @@ function wire(root, rerender) {
       const emp = state.EMPLEADOS.find((e) => e.id === v.empId);
       if (!emp) { toast('El empleado de este registro ya no existe.', 'error'); return; }
       const html = comprobante(`${empresaConRif()} — Comprobante de disfrute de vacaciones`, [
-        ['Empleado', emp.nombre], ['Año de servicio cubierto', 'Año ' + v.anoServicio], ['Días disfrutados', v.dias], ['Fecha de inicio', fmtDate(v.fecha)]
+        ['Empleado', emp.nombre], ['Año de servicio cubierto', 'Año ' + v.anoServicio], ['Días disfrutados', v.dias], ['Fecha de inicio', fmtDate(v.fecha)],
+        ...(v.observaciones ? [['Observaciones', v.observaciones]] : [])
       ]);
       const res = await window.api.pdf.export(html, 'Comprobante de vacaciones', `vacaciones-${emp.nombre.replace(/\s+/g, '-')}-${v.fecha}.pdf`);
       if (!res.canceled) toast('PDF guardado: ' + res.filePath, 'success');

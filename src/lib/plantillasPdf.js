@@ -145,10 +145,11 @@ export function bonoAlimentacionReciboHTML(emp, fecha, r, numeroRecibo) {
       ${datosTrabajadorHTML(emp, fecha, salarioVigente(emp, fecha), numeroRecibo)}
       <table>
         <tbody>
-          <tr><td>Bono de alimentación del mes (no salarial)</td><td>${fmt(r.monto, fecha)}</td></tr>
+          <tr><td>Bono de alimentación del mes (no salarial)${r.dias < 30 ? ` — ${r.dias} de 30 días` : ''}</td><td>${fmt(r.monto, fecha)}</td></tr>
           <tr><td><b>Monto a pagar</b></td><td><b>${fmt(r.monto, fecha)}</b></td></tr>
         </tbody>
       </table>
+      ${r.parcialPorEgreso ? `<div class="legal" style="margin-top:4px;">Monto prorrateado — el trabajador egresó antes de terminar el mes.</div>` : ''}
       ${FIRMA_HTML(empresaConRif())}
     </div>`;
 }
@@ -180,12 +181,13 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
   if (kind === 'bonoalimentacion') {
     const mes = fecha.slice(0, 7);
     const filasHtml = filas.map(({ emp, r }) => `<tr>
-      <td>${emp ? emp.nombre : '—'}</td><td>${emp ? (emp.cargo || '—') : '—'}</td>
+      <td>${emp ? emp.nombre : '—'}${r.parcialPorEgreso ? ' <span class="tag err">egresó</span>' : ''}</td><td>${emp ? (emp.cargo || '—') : '—'}</td>
+      <td>${r.dias}${r.dias < 30 ? ' <span class="tag warn">parcial</span>' : ''}</td>
       <td><b>${fmt(r.monto, fecha)}</b></td>
     </tr>`).join('');
     return {
       subtitulo: `Bono de alimentación · Mes ${mes} · fecha de pago ${fmtDate(fecha)} · ${filas.length} empleados`,
-      encabezados: ['Empleado', 'Cargo', 'Monto'],
+      encabezados: ['Empleado', 'Cargo', 'Días', 'Monto'],
       filasHtml
     };
   }

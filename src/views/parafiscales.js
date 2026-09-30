@@ -3,7 +3,7 @@ import { logoHeaderHTML } from '../lib/logo.js';
 import { construirInformeAportesHTML, construirInformeARIHTML, construirInformeARCHTML, construirInformeDPPHTML, informeConAcciones } from '../lib/informes.js';
 import { calcularPorcentajeARI, TARIFA_1, UT_VALOR_BS_REF, DESGRAVAMEN_UNICO_UT } from '../lib/ari.js';
 import { estimarIngresoAnualEmp } from '../lib/calculos.js';
-import { fmtNum, todayStr } from '../lib/formato.js';
+import { fmtNum, fmtDate, todayStr } from '../lib/formato.js';
 import { toast } from '../components/toast.js';
 
 const MODULOS = [
@@ -12,6 +12,20 @@ const MODULOS = [
   { id: 'islr', label: 'ISLR (AR-I / AR-C)' }
 ];
 let MODULO_ACTIVO = 'aportes';
+
+// El AR-I se recalcula por trimestre (aunque legalmente se puede recalcular
+// en cualquier momento que cambie el ingreso) — esto solo identifica cuál
+// trimestre se está calculando, para que la fecha del documento y el
+// registro queden acordes al período, no siempre a "hoy".
+const TRIMESTRE_LABELS = {
+  1: '1er trimestre (enero-marzo)', 2: '2do trimestre (abril-junio)',
+  3: '3er trimestre (julio-septiembre)', 4: '4to trimestre (octubre-diciembre)'
+};
+function finTrimestreISO(trimestre, ano) {
+  const mesFin = trimestre * 3;
+  const ultimoDia = new Date(ano, mesFin, 0).getDate();
+  return `${ano}-${String(mesFin).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
+}
 
 function moduloHTML() {
   if (MODULO_ACTIVO === 'aportes') return aportesHTML();
@@ -104,12 +118,22 @@ function dppHTML() {
 
 function islrHTML() {
   const anoActual = new Date().getFullYear();
+  const trimestreActual = Math.floor(new Date().getMonth() / 3) + 1;
   const opciones = state.EMPLEADOS.map((e) => `<option value="${e.id}">${e.nombre}</option>`).join('');
   return `
   <div class="card">
     <h2>Calculadora AR-I — determinar el % de retención</h2>
-    <div class="desc">Sigue el mismo método del formulario AR-I (Art. 50 LISLR y Art. 4 del Reglamento del Decreto 1.808): proyecta el ingreso anual, le resta un desgravamen, ubica el tramo de la Tarifa 1, resta las rebajas personales, y expresa el impuesto resultante como % del ingreso anual. Úsela quien no quiera hacer la cuenta a mano — el resultado es orientativo, revíselo con su contador antes de aplicarlo.</div>
+    <div class="desc">Sigue el mismo método del formulario AR-I (Art. 50 LISLR y Art. 4 del Reglamento del Decreto 1.808): proyecta el ingreso anual, le resta un desgravamen, ubica el tramo de la Tarifa 1, resta las rebajas personales, y expresa el impuesto resultante como % del ingreso anual. Úsela quien no quiera hacer la cuenta a mano — el resultado es orientativo, revíselo con su contador antes de aplicarlo. Recalcule cada trimestre (o cuando el sueldo cambie de forma importante) — identifique aquí cuál trimestre está haciendo, para llevar el control de cuál es el vigente.</div>
     <div class="grid cols-3">
+      <div class="field"><label>Trimestre que está calculando</label>
+        <select id="ariTrimestre">
+          <option value="1" ${trimestreActual === 1 ? 'selected' : ''}>1er trimestre (enero-marzo)</option>
+          <option value="2" ${trimestreActual === 2 ? 'selected' : ''}>2do trimestre (abril-junio)</option>
+          <option value="3" ${trimestreActual === 3 ? 'selected' : ''}>3er trimestre (julio-septiembre)</option>
+          <option value="4" ${trimestreActual === 4 ? 'selected' : ''}>4to trimestre (octubre-diciembre)</option>
+        </select>
+      </div>
+      <div class="field"><label>Año gravable</label><input type="number" step="1" id="ariAnoGravable" value="${anoActual}"></div>
       <div class="field"><label>Empleado</label><select id="ariEmp"><option value="">— seleccione para estimar el ingreso —</option>${opciones}</select></div>
       <div class="field">
         <label>Ingreso anual estimado (Bs.)</label>
@@ -170,16 +194,33 @@ function islrHTML() {
 
 function wire(root) {
   const ariEmpSel = root.querySelector('#ariEmp');
+  const ariTrimestreSel = root.querySelector('#ariTrimestre');
+  const ariAnoGravableInput = root.querySelector('#ariAnoGravable');
+  // La fecha de referencia para "estimar" el ingreso NO es siempre hoy: si
+  // está calculando el AR-I de un trimestre pasado, el ingreso debe
+  // reflejar el sueldo/tasa vigente en ESE trimestre (no la de hoy, que ya
+  // puede ser muy distinta por la devaluación) — por eso cambia solo al
+  // cambiar el trimestre o el año.
+  function fechaReferenciaTrimestre() {
+    const trimestre = Number(ariTrimestreSel && ariTrimestreSel.value) || 1;
+    const ano = Number(ariAnoGravableInput && ariAnoGravableInput.value) || new Date().getFullYear();
+    return finTrimestreISO(trimestre, ano);
+  }
   function recalcularIngresoARI() {
     const emp = state.EMPLEADOS.find((e) => e.id === ariEmpSel.value);
     const ingresoInput = root.querySelector('#ariIngreso');
     const desglose = root.querySelector('#ariIngresoDesglose');
     if (!emp) { desglose.textContent = ''; return; }
-    const est = estimarIngresoAnualEmp(emp, todayStr());
+    const fechaRef = fechaReferenciaTrimestre();
+    const est = estimarIngresoAnualEmp(emp, fechaRef);
     ingresoInput.value = Math.round(est.total);
-    desglose.textContent = `Salario (${fmtNum(est.salarioAnual, 0)}) + utilidades (${fmtNum(est.utilidadesAnual, 0)}) + bono vacacional (${fmtNum(est.bonoVacAnual, 0)}) — no incluye el bono de alimentación, que no es salarial.`;
+    desglose.textContent = `Al ${fmtDate(fechaRef)}: salario (${fmtNum(est.salarioAnual, 0)}) + utilidades (${fmtNum(est.utilidadesAnual, 0)}) + bono vacacional (${fmtNum(est.bonoVacAnual, 0)}) — no incluye el bono de alimentación, que no es salarial.`;
   }
   if (ariEmpSel) ariEmpSel.addEventListener('change', recalcularIngresoARI);
+  // Al cambiar de trimestre o de año, si ya hay un empleado elegido, se
+  // recalcula sola — no hace falta darle "Recalcular" a mano cada vez.
+  if (ariTrimestreSel) ariTrimestreSel.addEventListener('change', () => { if (ariEmpSel.value) recalcularIngresoARI(); });
+  if (ariAnoGravableInput) ariAnoGravableInput.addEventListener('change', () => { if (ariEmpSel.value) recalcularIngresoARI(); });
   const btnRecalcularIngresoARI = root.querySelector('#btnRecalcularIngresoARI');
   if (btnRecalcularIngresoARI) btnRecalcularIngresoARI.addEventListener('click', () => {
     if (!ariEmpSel.value) { toast('Seleccione un empleado para estimar su ingreso.', 'error'); return; }
@@ -229,6 +270,10 @@ function wire(root) {
   if (btnCalcularARI) btnCalcularARI.addEventListener('click', () => {
     const empId = root.querySelector('#ariEmp').value;
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
+    const trimestre = Number(root.querySelector('#ariTrimestre').value) || 1;
+    const anoGravable = Number(root.querySelector('#ariAnoGravable').value) || new Date().getFullYear();
+    const trimestreLabel = TRIMESTRE_LABELS[trimestre];
+    const fechaDocumento = finTrimestreISO(trimestre, anoGravable);
     const ingresoAnualBs = Number(root.querySelector('#ariIngreso').value);
     const utValorBs = Number(root.querySelector('#ariUT').value) || UT_VALOR_BS_REF;
     const esPropio = ariDesgravamenTipo.value === 'propio';
@@ -262,7 +307,8 @@ function wire(root) {
       </tbody></table>` : '';
     const cont = root.querySelector('#ariCalcResultado');
     cont.innerHTML = `
-      <table style="margin-top:14px;"><tbody>${filas.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
+      <div class="legal" style="margin-top:12px;">${trimestreLabel} · ${anoGravable} — fecha del documento: ${fmtDate(fechaDocumento)}</div>
+      <table style="margin-top:6px;"><tbody>${filas.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
       ${detalleDesgravamenHTML}
       <div class="totals"><div class="item"><div class="lbl">% de ISLR a retener</div><div class="val">${r.porcentaje}%</div></div></div>
       ${r.porcentaje >= 15 ? `<div class="note" style="margin-top:12px;">Este % sale alto porque la Unidad Tributaria (Bs. ${fmtNum(utValorBs, 2)}) quedó muy por detrás de la inflación: casi cualquier sueldo en bolívares hoy equivale a miles de U.T. por año, lo que empuja el cálculo al tramo tope (34%) aunque el sueldo real sea modesto. Esto es un problema conocido y discutido de la ley actual, no un error de esta calculadora — antes de aplicar un % así de alto a un pago real, verifíquelo con su contador.</div>` : ''}
@@ -280,7 +326,6 @@ function wire(root) {
     });
 
     cont.querySelector('#btnDescargarPdfARI').addEventListener('click', async () => {
-      const anoGravable = new Date().getFullYear();
       const html = `
         <div>
           <div style="display:flex;justify-content:center;">${logoHeaderHTML()}</div>
@@ -291,7 +336,7 @@ function wire(root) {
               <td style="width:34%;"><div class="legal">Apellidos y nombres</div><b>${emp ? emp.nombre : '—'}</b></td>
               <td style="width:22%;"><div class="legal">Cédula de identidad</div><b>${emp && emp.cedula ? emp.cedula : '—'}</b></td>
               <td style="width:22%;"><div class="legal">Año gravable</div><b>${anoGravable}</b></td>
-              <td style="width:22%;"><div class="legal">Fecha</div><b>${todayStr()}</b></td>
+              <td style="width:22%;"><div class="legal">Trimestre / fecha</div><b>${trimestreLabel}<br>${fmtDate(fechaDocumento)}</b></td>
             </tr>
           </table>
           <div class="legal" style="margin-top:4px;">Empresa u organismo donde trabaja: <b>${empresaConRif()}</b></div>
@@ -325,12 +370,11 @@ function wire(root) {
             </tr>
           </table>
         </div>`;
-      const res = await window.api.pdf.export(html, 'AR-I', `ar-i-${(emp ? emp.nombre.replace(/\s+/g, '-') : 'calculo')}-${todayStr()}.pdf`);
+      const res = await window.api.pdf.export(html, 'AR-I', `ar-i-${(emp ? emp.nombre.replace(/\s+/g, '-') : 'calculo')}-T${trimestre}-${anoGravable}.pdf`);
       if (!res.canceled) toast('PDF guardado: ' + res.filePath, 'success');
     });
 
     cont.querySelector('#btnDescargarExcelARI').addEventListener('click', async () => {
-      const anoGravable = new Date().getFullYear();
       const rows = [
         ['IMPUESTO SOBRE LA RENTA — Formulario AR-I (casillas de la planilla oficial)'],
         ['Empresa u organismo', state.CONFIG.nombreEmpresa],
@@ -338,7 +382,8 @@ function wire(root) {
         ['Apellidos y nombres', emp ? emp.nombre : ''],
         ['Cédula de identidad', emp && emp.cedula ? emp.cedula : ''],
         ['Año gravable', anoGravable],
-        ['Fecha del cálculo', todayStr()],
+        ['Trimestre', trimestreLabel],
+        ['Fecha del período', fmtDate(fechaDocumento)],
         [],
         ['Casilla', 'Concepto', 'Valor'],
         ['A', 'Total que estima percibir en el año (Bs.)', ingresoAnualBs],
@@ -361,7 +406,7 @@ function wire(root) {
       ];
       const res = await window.api.xlsx.downloadSheet({
         sheetName: 'AR-I', rows, colWidths: [10, 44, 20],
-        defaultFilename: `ar-i-${(emp ? emp.nombre.replace(/\s+/g, '-') : 'calculo')}-${todayStr()}.xlsx`
+        defaultFilename: `ar-i-${(emp ? emp.nombre.replace(/\s+/g, '-') : 'calculo')}-T${trimestre}-${anoGravable}.xlsx`
       });
       if (!res.canceled) toast('Excel guardado: ' + res.filePath, 'success');
     });

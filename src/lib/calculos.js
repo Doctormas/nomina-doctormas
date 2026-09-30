@@ -476,15 +476,40 @@ function bonoAlimentacionYaPagadoEnMes(empId, fechaPeriodoISO) {
   return state.BONO_ALIM_PAGADO.some((b) => b.empId === empId && b.fecha.slice(0, 7) === mesISO);
 }
 
+// Se paga al cierre de mes, pero prorrateado por los días REALMENTE
+// trabajados ese mes de 30 días — igual que la base de las deducciones en
+// calcularReciboNomina: si ingresó a mitad de mes, o si ya egresó (aunque
+// hoy su ficha diga "Egresado"), no se le paga el mes completo ni se le
+// deja de pagar nada — se le paga la porción de esos días.
 export function calcularBonoAlimentacion(emp, fechaPeriodoISO) {
-  const monto = cestaticketEmp(emp, fechaPeriodoISO);
+  const montoCompleto = cestaticketEmp(emp, fechaPeriodoISO);
+  const finEfectivo = fechaFinEfectivaPeriodo(emp, fechaPeriodoISO);
+  const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
+  const inicioReal = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
+  const dias = Math.min(diasEntreInclusive(inicioReal, finEfectivo), 30);
+  const monto = montoCompleto * (dias / 30);
   const yaPagado = bonoAlimentacionYaPagadoEnMes(emp.id, fechaPeriodoISO);
-  return { monto, yaPagado };
+  const parcialPorEgreso = dias < 30 && finEfectivo !== fechaPeriodoISO;
+  return { monto, dias, montoCompleto, yaPagado, parcialPorEgreso };
 }
 
 export function departamentosEmpleados() {
   const set = new Set(state.EMPLEADOS.map((e) => (e.departamento || '').trim()).filter(Boolean));
   return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+// Empleados que ya quedaron "Egresado" pero estuvieron activos en algún
+// momento dentro de la ventana [desde, hastaISO] — para que no desaparezcan
+// de una corrida (nómina o bono de alimentación) de un período en el que sí
+// trabajaron, solo porque su ficha hoy ya no está activa.
+function egresadosEnVentana(desde, hastaISO, departamento) {
+  let lista = state.EMPLEADOS.filter((e) =>
+    e.activo === false && e.egreso && e.egreso.fecha &&
+    e.egreso.fecha >= desde &&
+    e.fechaIngreso && e.fechaIngreso <= hastaISO
+  );
+  if (departamento) lista = lista.filter((e) => (e.departamento || '') === departamento);
+  return lista;
 }
 
 export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento) {
@@ -502,7 +527,13 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
   }
 
   if (tipoPeriodo === 'bonoalimentacion') {
-    const filas = activos.map((emp) => ({ emp, kind: 'bonoalimentacion', r: calcularBonoAlimentacion(emp, fechaPeriodoISO) }));
+    // El bono de alimentación se paga al cierre de mes por los días de ESE
+    // mes — a diferencia de utilidades/bono vacacional (que sí se liquidan
+    // aparte, fraccionados, al egresar), este NO se liquida en ningún lado:
+    // si no se incluye aquí, un empleado que egresó a mitad de mes se queda
+    // sin cobrar los días que sí trabajó.
+    const activosBono = activos.concat(egresadosEnVentana(sumarDias(fechaPeriodoISO, -29), fechaPeriodoISO, departamento));
+    const filas = activosBono.map((emp) => ({ emp, kind: 'bonoalimentacion', r: calcularBonoAlimentacion(emp, fechaPeriodoISO) }));
     const totales = filas.reduce((a, f) => ({
       devengado: a.devengado + f.r.monto, deducciones: a.deducciones, neto: a.neto + f.r.monto, aportes: a.aportes
     }), { devengado: 0, deducciones: 0, neto: 0, aportes: 0 });
@@ -522,24 +553,18 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
     return { filas, totales, kind: 'bonovacacional' };
   }
 
-  // Nómina ordinaria: a diferencia de utilidades/bono vacacional/bono de
-  // alimentación (que ya se liquidan aparte, fraccionados, al egresar), un
-  // empleado que estuvo activo durante ESTE período todavía tiene derecho a
-  // su sueldo — no debe desaparecer de la corrida solo porque HOY su ficha
-  // ya está en estado "Egresado". Esto incluye generar/regenerar un período
-  // PASADO después de que la persona ya se fue: si egresó DESPUÉS del cierre
-  // de este período, estuvo activa los 15/30 días completos (no hace falta
-  // que su egreso caiga justo dentro de las fechas de este período) —
-  // calcularReciboNomina se encarga de cobrarle solo hasta su fecha de
-  // egreso cuando sí cae dentro, o el período completo si egresó después.
+  // Nómina ordinaria: a diferencia de utilidades/bono vacacional (que sí se
+  // liquidan aparte, fraccionados, al egresar), un empleado que estuvo
+  // activo durante ESTE período todavía tiene derecho a su sueldo — no debe
+  // desaparecer de la corrida solo porque HOY su ficha ya está en estado
+  // "Egresado". Esto incluye generar/regenerar un período PASADO después de
+  // que la persona ya se fue: si egresó DESPUÉS del cierre de este período,
+  // estuvo activa los 15/30 días completos (no hace falta que su egreso
+  // caiga justo dentro de las fechas de este período) — calcularReciboNomina
+  // se encarga de cobrarle solo hasta su fecha de egreso cuando sí cae
+  // dentro, o el período completo si egresó después.
   const { desde: periodoDesde } = periodoNominal(tipoPeriodo, fechaPeriodoISO);
-  let egresadosDelPeriodo = state.EMPLEADOS.filter((e) =>
-    e.activo === false && e.egreso && e.egreso.fecha &&
-    e.egreso.fecha >= periodoDesde &&
-    e.fechaIngreso && e.fechaIngreso <= fechaPeriodoISO
-  );
-  if (departamento) egresadosDelPeriodo = egresadosDelPeriodo.filter((e) => (e.departamento || '') === departamento);
-  const activosNomina = activos.concat(egresadosDelPeriodo);
+  const activosNomina = activos.concat(egresadosEnVentana(periodoDesde, fechaPeriodoISO, departamento));
 
   const filas = activosNomina.map((emp) => ({ emp, kind: 'nomina', r: calcularReciboNomina(emp, tipoPeriodo, fechaPeriodoISO) }));
   const totales = filas.reduce((a, f) => ({
