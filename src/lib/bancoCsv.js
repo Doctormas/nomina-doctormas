@@ -24,12 +24,13 @@ function dividirCedula(cedula) {
   return { tipo, numero };
 }
 
-// El banco usa coma como separador decimal (no punto) y sin separador de miles.
+// El banco usa formato venezolano: punto de separador de miles, coma decimal
+// (ej. 34.315,50) — igual que se ve en toda la app, no solo coma decimal sola.
 function montoCSV(n) {
-  return Number(n || 0).toFixed(2).replace('.', ',');
+  return Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// El delimitador de columnas es ";" — solo se escapan comillas/; /saltos de
+// El delimitador de columnas es ";" — solo se escapan comillas/;/saltos de
 // línea, NUNCA la coma (es el separador decimal del monto, no del banco).
 function escCampo(v) {
   v = (v === undefined || v === null) ? '' : String(v);

@@ -123,8 +123,19 @@ function islrHTML() {
       <div class="field"><label>Desgravamen</label>
         <select id="ariDesgravamenTipo"><option value="unico">Único (${DESGRAVAMEN_UNICO_UT} U.T. — sin comprobantes)</option><option value="propio">Personalizado (U.T.)</option></select>
       </div>
-      <div class="field" id="ariDesgravamenPropioWrap" style="display:none;"><label>Desgravamen personalizado (U.T.)</label><input type="number" step="1" id="ariDesgravamenPropio" value="${DESGRAVAMEN_UNICO_UT}"></div>
       <div class="field"><label>Cargas familiares (cónyuge, hijos, etc.)</label><input type="number" step="1" id="ariCargas" value="0"></div>
+    </div>
+    <div id="ariDesgravamenPropioWrap" style="display:none;margin-top:6px;">
+      <h3 style="font-size:.9rem;margin:0 0 8px;">Desgravámenes detallados (Art. 60 LISLR) — llene lo que el trabajador puede comprobar, en bolívares</h3>
+      <div class="desc" style="margin-bottom:8px;">Solo se puede sumar lo que entra en estos 5 conceptos — el trabajador debe conservar los comprobantes. Ponga el monto en <b>bolívares</b> de cada uno; el sistema lo convierte solo a Unidades Tributarias (con el valor de arriba) y le aplica el tope a los dos que lo tienen.</div>
+      <div class="grid cols-3">
+        <div class="field"><label>Educación (trabajador e hijos ≤25 años)</label><input type="number" step="0.01" class="ariDesgInput" id="ariDesgEducacion" value="0"><div class="legal">Institutos docentes del país — sin tope</div></div>
+        <div class="field"><label>Seguro de hospitalización, cirugía y maternidad</label><input type="number" step="0.01" class="ariDesgInput" id="ariDesgSeguro" value="0"><div class="legal">Contratado en el país — sin tope</div></div>
+        <div class="field"><label>Servicios médicos, odontológicos y de hospitalización</label><input type="number" step="0.01" class="ariDesgInput" id="ariDesgMedico" value="0"><div class="legal">Del trabajador y cargas directas, en el país — sin tope</div></div>
+        <div class="field"><label>Intereses de préstamo de vivienda principal</label><input type="number" step="0.01" class="ariDesgInput" id="ariDesgVivienda" value="0"><div class="legal">Tope: 1.000 U.T. al año</div></div>
+        <div class="field"><label>Alquiler de vivienda (si no tiene propia)</label><input type="number" step="0.01" class="ariDesgInput" id="ariDesgAlquiler" value="0"><div class="legal">Tope: 800 U.T. al año</div></div>
+      </div>
+      <div class="legal" id="ariDesgTotalUT" style="margin-top:8px;font-weight:700;"></div>
     </div>
     <button class="btn" id="btnCalcularARI" style="margin-top:10px;">Calcular %</button>
     <div id="ariCalcResultado"></div>
@@ -174,9 +185,44 @@ function wire(root) {
     if (!ariEmpSel.value) { toast('Seleccione un empleado para estimar su ingreso.', 'error'); return; }
     recalcularIngresoARI();
   });
+  // Los 5 conceptos itemizados del Art. 60 LISLR — el usuario llena el monto
+  // en Bs. de cada uno, esto los convierte solos a U.T. y le aplica el tope
+  // a los dos que lo tienen (vivienda: 1.000 U.T.; alquiler: 800 U.T.).
+  const DESG_CONCEPTOS = [
+    { id: 'ariDesgEducacion', label: 'Educación (trabajador e hijos ≤25 años)', topeUT: null },
+    { id: 'ariDesgSeguro', label: 'Seguro de hospitalización, cirugía y maternidad', topeUT: null },
+    { id: 'ariDesgMedico', label: 'Servicios médicos, odontológicos y de hospitalización', topeUT: null },
+    { id: 'ariDesgVivienda', label: 'Intereses de préstamo de vivienda principal', topeUT: 1000 },
+    { id: 'ariDesgAlquiler', label: 'Alquiler de vivienda (si no tiene propia)', topeUT: 800 }
+  ];
+  function calcularDesgravamenDetalle(utValorBs) {
+    return DESG_CONCEPTOS.map((c) => {
+      const inp = root.querySelector('#' + c.id);
+      const montoBs = Number(inp && inp.value) || 0;
+      const utSinTope = montoBs / utValorBs;
+      const utAplicado = c.topeUT !== null ? Math.min(utSinTope, c.topeUT) : utSinTope;
+      return { ...c, montoBs, utSinTope, utAplicado, topeAplicado: c.topeUT !== null && utSinTope > c.topeUT };
+    });
+  }
+  function actualizarTotalDesgravamen() {
+    const utValorBs = Number(root.querySelector('#ariUT').value) || UT_VALOR_BS_REF;
+    const detalle = calcularDesgravamenDetalle(utValorBs);
+    const totalUT = detalle.reduce((a, d) => a + d.utAplicado, 0);
+    const totalEl = root.querySelector('#ariDesgTotalUT');
+    if (totalEl) {
+      const conTope = detalle.filter((d) => d.topeAplicado);
+      totalEl.innerHTML = `Total desgravamen: ${fmtNum(totalUT, 2)} U.T.${conTope.length ? ` — tope aplicado en: ${conTope.map((d) => d.label).join(', ')}` : ''}`;
+    }
+  }
+  root.querySelectorAll('.ariDesgInput').forEach((inp) => inp.addEventListener('input', actualizarTotalDesgravamen));
+  const ariUTInput = root.querySelector('#ariUT');
+  if (ariUTInput) ariUTInput.addEventListener('input', actualizarTotalDesgravamen);
+
   const ariDesgravamenTipo = root.querySelector('#ariDesgravamenTipo');
   if (ariDesgravamenTipo) ariDesgravamenTipo.addEventListener('change', () => {
-    root.querySelector('#ariDesgravamenPropioWrap').style.display = ariDesgravamenTipo.value === 'propio' ? '' : 'none';
+    const esPropio = ariDesgravamenTipo.value === 'propio';
+    root.querySelector('#ariDesgravamenPropioWrap').style.display = esPropio ? '' : 'none';
+    if (esPropio) actualizarTotalDesgravamen();
   });
 
   const btnCalcularARI = root.querySelector('#btnCalcularARI');
@@ -185,11 +231,13 @@ function wire(root) {
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
     const ingresoAnualBs = Number(root.querySelector('#ariIngreso').value);
     const utValorBs = Number(root.querySelector('#ariUT').value) || UT_VALOR_BS_REF;
-    const desgravamenUT = ariDesgravamenTipo.value === 'propio' ? Number(root.querySelector('#ariDesgravamenPropio').value) || 0 : DESGRAVAMEN_UNICO_UT;
+    const esPropio = ariDesgravamenTipo.value === 'propio';
+    const desgravamenDetalle = esPropio ? calcularDesgravamenDetalle(utValorBs) : null;
+    const desgravamenUT = esPropio ? desgravamenDetalle.reduce((a, d) => a + d.utAplicado, 0) : DESGRAVAMEN_UNICO_UT;
     const cargas = Number(root.querySelector('#ariCargas').value) || 0;
     if (!ingresoAnualBs) { toast('Ingrese el ingreso anual estimado.', 'error'); return; }
     const r = calcularPorcentajeARI({ ingresoAnualBs, desgravamenUT, cargasFamiliares: cargas, utValorBs });
-    const letraDesgravamen = ariDesgravamenTipo.value === 'propio' ? 'D' : 'E';
+    const letraDesgravamen = esPropio ? 'D' : 'E';
 
     // Mismas letras de casilla que la planilla oficial AR-I (A, B, D/E, F, G, H, I, J)
     // para que el desglose se pueda cotejar renglón por renglón contra el formulario real.
@@ -204,9 +252,18 @@ function wire(root) {
       ['I — Impuesto a retener en el año (G − H)', `${fmtNum(r.impuestoNetoUT, 2)} U.T. = ${fmtNum(r.impuestoNetoBs, 2)} Bs.`],
       ['J — % de retención inicial (I ÷ B × 100)', `${r.porcentaje}%`]
     ];
+    // Desglose de los 5 conceptos del desgravamen itemizado — solo cuando es
+    // "Personalizado", para que quede claro de dónde salió el total.
+    const detalleDesgravamenHTML = desgravamenDetalle ? `
+      <div class="legal" style="margin:10px 0 2px;">Desglose del desgravamen (Art. 60 LISLR):</div>
+      <table><thead><tr><th>Concepto</th><th>Monto (Bs.)</th><th>U.T.</th></tr></thead><tbody>
+        ${desgravamenDetalle.map((d) => `<tr><td>${d.label}</td><td>${fmtNum(d.montoBs, 2)}</td><td>${fmtNum(d.utAplicado, 2)}${d.topeAplicado ? ` <span class="tag warn">tope ${d.topeUT} U.T.</span>` : ''}</td></tr>`).join('')}
+        <tr><td><b>Total</b></td><td></td><td><b>${fmtNum(desgravamenUT, 2)} U.T.</b></td></tr>
+      </tbody></table>` : '';
     const cont = root.querySelector('#ariCalcResultado');
     cont.innerHTML = `
       <table style="margin-top:14px;"><tbody>${filas.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
+      ${detalleDesgravamenHTML}
       <div class="totals"><div class="item"><div class="lbl">% de ISLR a retener</div><div class="val">${r.porcentaje}%</div></div></div>
       ${r.porcentaje >= 15 ? `<div class="note" style="margin-top:12px;">Este % sale alto porque la Unidad Tributaria (Bs. ${fmtNum(utValorBs, 2)}) quedó muy por detrás de la inflación: casi cualquier sueldo en bolívares hoy equivale a miles de U.T. por año, lo que empuja el cálculo al tramo tope (34%) aunque el sueldo real sea modesto. Esto es un problema conocido y discutido de la ley actual, no un error de esta calculadora — antes de aplicar un % así de alto a un pago real, verifíquelo con su contador.</div>` : ''}
       <div class="btn-row no-print" style="margin-top:14px;">
@@ -242,8 +299,9 @@ function wire(root) {
           <h3 style="font-size:.95rem;margin:16px 0 4px;">A · Estimación de las remuneraciones y B · conversión a Unidades Tributarias</h3>
           <table style="margin-top:4px;"><tbody>${filas.slice(0, 2).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
 
-          <h3 style="font-size:.95rem;margin:16px 0 4px;">${letraDesgravamen} · Desgravamen ${letraDesgravamen === 'E' ? 'único (Art. 61 LISLR)' : 'estimado (itemizado)'}</h3>
+          <h3 style="font-size:.95rem;margin:16px 0 4px;">${letraDesgravamen} · Desgravamen ${letraDesgravamen === 'E' ? 'único (Art. 61 LISLR)' : 'detallado (Art. 60 LISLR)'}</h3>
           <table style="margin-top:4px;"><tbody>${filas.slice(2, 4).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
+          ${detalleDesgravamenHTML}
 
           <h3 style="font-size:.95rem;margin:16px 0 4px;">G · Cálculo del impuesto estimado (Tarifa 1, Art. 50 LISLR)</h3>
           <table style="margin-top:4px;"><tbody>${filas.slice(4, 6).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
@@ -286,7 +344,8 @@ function wire(root) {
         ['A', 'Total que estima percibir en el año (Bs.)', ingresoAnualBs],
         ['—', 'Unidad Tributaria (Bs.)', utValorBs],
         ['B', 'Remuneraciones convertidas a U.T. (A ÷ U.T.)', Number(r.ingresoAnualUT.toFixed(2))],
-        [letraDesgravamen, `Desgravamen ${letraDesgravamen === 'E' ? 'único' : 'estimado'} (U.T.)`, desgravamenUT],
+        [letraDesgravamen, `Desgravamen ${letraDesgravamen === 'E' ? 'único' : 'detallado (Art. 60 LISLR)'} (U.T.)`, Number(desgravamenUT.toFixed(2))],
+        ...(desgravamenDetalle ? desgravamenDetalle.map((d) => ['—', `   · ${d.label} (Bs. ${fmtNum(d.montoBs, 2)}${d.topeAplicado ? `, tope ${d.topeUT} U.T.` : ''})`, Number(d.utAplicado.toFixed(2))]) : []),
         ['F', 'Enriquecimiento neto (B − ' + letraDesgravamen + ') (U.T.)', Number(r.enriquecimientoNetoUT.toFixed(2))],
         ['—', 'Tramo Tarifa 1 hasta (U.T.)', r.tramo.hasta === Infinity ? 'sin tope' : r.tramo.hasta],
         ['—', '% del tramo', r.tramo.pct],
