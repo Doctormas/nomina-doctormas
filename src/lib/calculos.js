@@ -286,18 +286,23 @@ export function calcularBonoVacacional(emp, anoServicio, fechaPagoISO) {
   return { dias, salario, salarioDiario, monto, yaPagado };
 }
 
-// Si el empleado ya egresó (Liquidación) y su fecha de egreso cae ANTES del
-// cierre de este período, no se le puede contar como si hubiera seguido
-// trabajando hasta el final — el período efectivo para él termina el día
-// de su egreso, no en fechaPeriodoISO. Esto NO cambia la fecha que se usa
-// para tasa de cambio, ISLR, etc. (todo el recibo sigue "fechado" el mismo
-// día que el resto de la corrida) — solo cuántos días de sueldo/base de
-// deducciones se le cuentan.
-function fechaFinEfectivaPeriodo(emp, fechaPeriodoISO) {
-  if (emp.activo === false && emp.egreso && emp.egreso.fecha && emp.egreso.fecha < fechaPeriodoISO) {
-    return emp.egreso.fecha;
-  }
-  return fechaPeriodoISO;
+// Fecha de egreso del empleado si ya egresó (Liquidación / ficha), o null.
+function fechaEgresoEmp(emp) {
+  return (emp.activo === false && emp.egreso && emp.egreso.fecha) ? emp.egreso.fecha : null;
+}
+
+// Días que corresponden a un trabajador dentro de una ventana [desde, hasta]
+// según su ingreso y su egreso: la ventana completa vale `diasCompleto` (15 de
+// quincena, 30 de mes — así febrero o un mes de 31 días no paga de más ni de
+// menos); si solo estuvo parte, se pagan los días reales (nunca más del
+// completo). Si ya se había ido antes de empezar la ventana, son 0.
+function diasEnVentana(emp, desdeISO, hastaISO, diasCompleto) {
+  const egreso = fechaEgresoEmp(emp);
+  const ini = emp.fechaIngreso && emp.fechaIngreso > desdeISO ? emp.fechaIngreso : desdeISO;
+  const fin = egreso && egreso < hastaISO ? egreso : hastaISO;
+  if (fin < ini) return 0;
+  if (ini <= desdeISO && fin >= hastaISO) return diasCompleto;
+  return Math.min(diasEntreInclusive(ini, fin), diasCompleto);
 }
 
 /* ---------- Nómina (período) ---------- */
@@ -306,47 +311,47 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const salarioMensual = salarioVigente(emp, fechaPeriodoISO);
   const salarioDiario = salarioMensual / 30;
   const diasConfigurados = cfg.diasSueldo;
-  const finEfectivo = fechaFinEfectivaPeriodo(emp, fechaPeriodoISO);
+  const mesDeCorte = primerYUltimoDiaMes(fechaPeriodoISO);
+  const egresoEmp = fechaEgresoEmp(emp);
   // Si ya se le pagó el bono de alimentación de este mes en su propia corrida
   // (tipo de nómina "Bono de alimentación"), esta nómina normal no lo incluye
   // de nuevo — se paga una sola vez por mes.
   const bonoAlimPagadoAparte = bonoAlimentacionYaPagadoEnMes(emp.id, fechaPeriodoISO);
-  const cestaticketPeriodo = (cfg.incluyeCestaticket && !bonoAlimPagadoAparte) ? cestaticketEmp(emp, fechaPeriodoISO) : 0;
+  // El bono de alimentación (Ley de Alimentación) se genera por jornada
+  // efectivamente laborada: igual que el sueldo, si ingresó o egresó dentro
+  // del mes se paga por los días reales de ese mes (de 30) — no el mes completo.
+  // Esto incluye a quien ya egresó: el bono del mes en que se fue sigue
+  // pagándose por sus días trabajados.
+  const diasBonoMes = diasEnVentana(emp, mesDeCorte.primero, mesDeCorte.ultimo, 30);
+  const cestaticketPeriodo = (cfg.incluyeCestaticket && !bonoAlimPagadoAparte)
+    ? cestaticketEmp(emp, fechaPeriodoISO) * (diasBonoMes / 30) : 0;
 
-  // Si el empleado ingresó a mitad de este período (o, para el primer mes de
-  // Doctormás, la empresa misma empezó a mitad de mes — 17/04/2023), no se
-  // paga como si hubiera trabajado el período completo: se prorratea a los
-  // días reales trabajados dentro de este período (quincena o mes). Lo
-  // mismo si egresó antes de que cerrara el período (finEfectivo).
-  const inicioVentanaPeriodo = sumarDias(fechaPeriodoISO, -(diasConfigurados - 1));
-  const inicioRealPeriodo = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaPeriodo ? emp.fechaIngreso : inicioVentanaPeriodo;
-  const diasPeriodo = Math.min(diasEntreInclusive(inicioRealPeriodo, finEfectivo), diasConfigurados);
+  // Sueldo: días trabajados dentro del período nominal (1-15, 16-fin de mes, o
+  // el mes). Si ingresó a mitad del período (o, para el primer mes de
+  // Doctormás, la empresa misma empezó a mitad de mes — 17/04/2023), o si ya
+  // egresó antes de que cerrara, se prorratea; quien ya se había ido antes de
+  // empezar el período tiene 0 días de sueldo (pero igual puede tener bono y
+  // deducciones del mes, si este tipo de nómina los incluye).
+  const { desde: periodoDesdeCalc, hasta: periodoHastaCalc } = periodoNominal(tipoKey, fechaPeriodoISO);
+  const diasPeriodo = diasEnVentana(emp, periodoDesdeCalc, periodoHastaCalc, diasConfigurados);
 
   const salarioNormalPeriodo = salarioDiario * diasPeriodo;
 
   const ant = antiguedad(emp.fechaIngreso, fechaPeriodoISO);
   const si = salarioIntegralDiario(salarioMensual, ant.anoServicioActual, diasUtilidadesEmp(emp));
 
-  // Lo que se PAGA en este recibo (devengado) es solo lo de este período (15
-  // días de quincena, o 30 si es mensual) — eso no cambia. Pero IVSS, FAOV,
-  // RPE, INCES e ISLR son una obligación MENSUAL real: si el tipo de nómina
-  // que "trae las deducciones" (ej. segunda quincena) las calculara solo
-  // sobre sus propios 15 días, y la quincena sin deducciones (ej. primera)
-  // no aporta nada, entre las dos se estaría declarando y pagando la MITAD
-  // de lo que realmente corresponde ese mes. Por eso la base de las
-  // deducciones/aportes usa los días del MES completo del trabajador (todas
-  // sus quincenas hasta la fecha de corte, o los 30 días si es mensual) —
-  // prorrateados si ingresó a mitad de mes — aunque el dinero se descuente
-  // de este recibo en particular. La Ley DPP NO se calcula aquí (recibo por
-  // recibo): se paga una vez al mes por el total del mes de cada
-  // trabajador — se calcula aparte, en Parafiscales (ver calcularDPPMes).
+  // IVSS, RPE, FAOV, INCES e ISLR se calculan POR PERÍODO: cada quincena
+  // (o el mes, si la nómina es mensual) sobre los días y el sueldo de ESE
+  // período, con los topes prorrateados a sus días. El informe del mes de
+  // Parafiscales es la suma de los recibos de las dos quincenas. La Ley DPP
+  // NO se calcula aquí: se paga una vez al mes por el total del mes de cada
+  // trabajador (ver calcularDPPMes).
   let ivssTrab = 0, rpeTrab = 0, faovTrab = 0, islrTrab = 0, ivssPatrono = 0, faovPatrono = 0, rpePatrono = 0, incesPatrono = 0;
   let ivssBaseDeclarada = false;
+  let baseIVSSCalc = 0, baseRPECalc = 0, baseFAOVCalc = 0, baseINCESCalc = 0;
   if (cfg.incluyeDeducciones) {
-    const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
-    const inicioRealMes = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
-    const diasMes = Math.min(diasEntreInclusive(inicioRealMes, finEfectivo), 30);
-    const salarioMesBase = salarioDiario * diasMes;
+    const diasMes = diasPeriodo;
+    const salarioMesBase = salarioNormalPeriodo;
 
     const fraccionMes = diasMes / 30;
     // Tope IVSS: 5 salarios mínimos (Art. 59 Ley del Seguro Social).
@@ -358,7 +363,6 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     const topeRPEMes = state.CONFIG.salarioMinimo * state.CONFIG.rpeTopeSalariosMinimos * fraccionMes;
     const pisoRPEMes = state.CONFIG.salarioMinimo * (state.CONFIG.rpePisoSalariosMinimos || 1) * fraccionMes;
     let baseCotizableRPE = Math.min(Math.max(salarioMesBase, pisoRPEMes), topeRPEMes);
-    const salarioIntegralMes = si.integral * diasMes;
 
     // Si hay un sueldo semanal cargado en el IVSS para este trabajador
     // (Empleados → Registro ante el IVSS), el IVSS y el RPE se calculan
@@ -385,9 +389,16 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
       ivssPatrono = baseCotizable * (state.CONFIG.ivssPatrono / 100);
       rpePatrono = baseCotizableRPE * (state.CONFIG.rpePatrono / 100);
     }
-    faovTrab = salarioIntegralMes * (state.CONFIG.faovTrabajador / 100);
-    faovPatrono = salarioIntegralMes * (state.CONFIG.faovPatrono / 100);
+    // FAOV sobre el SALARIO NORMAL del mes (no el integral): criterio fijado
+    // por la empresa (la ley habla de salario integral; hay doctrina que
+    // sostiene el salario normal — validar con la contadora).
+    faovTrab = salarioMesBase * (state.CONFIG.faovTrabajador / 100);
+    faovPatrono = salarioMesBase * (state.CONFIG.faovPatrono / 100);
     incesPatrono = salarioMesBase * (state.CONFIG.incesPatrono / 100);
+    baseIVSSCalc = inscritoIVSS ? baseCotizable : 0;
+    baseRPECalc = inscritoIVSS ? baseCotizableRPE : 0;
+    baseFAOVCalc = salarioMesBase;
+    baseINCESCalc = salarioMesBase;
 
     // ISLR (impuesto sobre la renta): % propio de cada empleado, determinado con el
     // formulario AR-I (declaración anual del trabajador). No hay un % general porque
@@ -408,11 +419,13 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
 
   return {
     salarioMensual, salarioDiario, salarioNormalPeriodo, cestaticketPeriodo, diasPeriodo,
-    bonoAlimPagadoAparte,
+    bonoAlimPagadoAparte, diasBonoMes,
+    salarioIntegralDiario: si.integral, alicuotaUtilDiaria: si.alicuotaUtil, alicuotaBonoDiaria: si.alicuotaBono,
+    baseIVSS: baseIVSSCalc, baseRPE: baseRPECalc, baseFAOV: baseFAOVCalc, baseINCES: baseINCESCalc,
     inscritoIVSS: emp.inscritoIVSS !== false,
     ivssBaseDeclarada,
     periodoParcial: diasPeriodo < diasConfigurados,
-    periodoParcialPorEgreso: diasPeriodo < diasConfigurados && finEfectivo !== fechaPeriodoISO,
+    periodoParcialPorEgreso: diasPeriodo < diasConfigurados && !!egresoEmp && egresoEmp <= periodoHastaCalc,
     periodoDesde, periodoHasta,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
     ivssTrab, rpeTrab, faovTrab, islrTrab, totalDeducciones, totalDevengado, neto,
@@ -429,9 +442,17 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
  * mínimo por trabajador (Art. 7 Ley DPP) si lo real fue menor a eso.
  * Se calcula en la pestaña Parafiscales, no en cada nómina individual.
  */
-export function calcularDPPMes(mesISO) {
+// corridaExtra (opcional): { tipoPeriodo, fecha, filas:[{emp, r}] } — una
+// corrida todavía no guardada, para estimar la DPP del mes incluyéndola
+// (si esa misma corrida ya estuviera guardada, no se cuenta dos veces).
+export function calcularDPPMes(mesISO, corridaExtra) {
+  let periodos = state.PERIODOS;
+  if (corridaExtra) {
+    periodos = periodos.filter((p) => !(p.tipoPeriodo === corridaExtra.tipoPeriodo && p.fecha === corridaExtra.fecha))
+      .concat(corridaExtra.filas.filter((x) => x.emp).map((x) => ({ empId: x.emp.id, tipoPeriodo: corridaExtra.tipoPeriodo, fecha: corridaExtra.fecha, resultado: x.r })));
+  }
   const empleadosIds = new Set();
-  state.PERIODOS.forEach((p) => { if (p.fecha.slice(0, 7) === mesISO) empleadosIds.add(p.empId); });
+  periodos.forEach((p) => { if (p.fecha.slice(0, 7) === mesISO) empleadosIds.add(p.empId); });
   state.BONO_ALIM_PAGADO.forEach((b) => { if (b.fecha.slice(0, 7) === mesISO) empleadosIds.add(b.empId); });
 
   const fechaRef = mesISO + '-01';
@@ -441,21 +462,83 @@ export function calcularDPPMes(mesISO) {
 
   const filas = Array.from(empleadosIds).map((empId) => {
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
-    const periodosDelMes = state.PERIODOS.filter((p) => p.empId === empId && p.fecha.slice(0, 7) === mesISO);
+    const periodosDelMes = periodos.filter((p) => p.empId === empId && p.fecha.slice(0, 7) === mesISO);
     const salario = periodosDelMes.reduce((a, p) => a + p.resultado.salarioNormalPeriodo, 0);
     const bonoEnNomina = periodosDelMes.reduce((a, p) => a + (p.resultado.cestaticketPeriodo || 0), 0);
     const bonoAparte = state.BONO_ALIM_PAGADO.filter((b) => b.empId === empId && b.fecha.slice(0, 7) === mesISO)
       .reduce((a, b) => a + b.monto, 0);
     const bono = bonoEnNomina + bonoAparte;
     const baseReal = salario + bono;
-    const baseMinimaAplicada = baseReal < dppBaseMinimaBs;
-    const baseFinal = Math.max(baseReal, dppBaseMinimaBs);
+    // Base mínima solo si está configurada (> 0); por defecto se usa el cálculo
+    // de ley: 9% sobre lo realmente pagado, sin piso por trabajador.
+    const baseMinimaAplicada = dppBaseMinimaBs > 0 && baseReal < dppBaseMinimaBs;
+    const baseFinal = baseMinimaAplicada ? dppBaseMinimaBs : baseReal;
     const dpp = baseFinal * (state.CONFIG.dppPatrono / 100);
     return { emp, salario, bono, baseReal, baseFinal, baseMinimaAplicada, dpp };
   }).filter((f) => f.emp).sort((a, b) => a.emp.nombre.localeCompare(b.emp.nombre));
 
   const totalDPP = filas.reduce((a, f) => a + f.dpp, 0);
   return { filas, totalDPP, dppBaseMinimaBs };
+}
+
+/**
+ * Parafiscales del MES por trabajador = la SUMA de los recibos guardados de
+ * ese mes (cada quincena se calcula a sus 15 días; el mes es la suma de las
+ * dos). Solo cuentan los conceptos salariales: el bono de alimentación no
+ * entra en ninguna base. La DPP tiene su propio informe (su base sí incluye
+ * el bono).
+ */
+export function calcularParafiscalesMes(mesISO) {
+  return calcularParafiscalesPeriodo(`${mesISO}-01`, `${mesISO}-31`);
+}
+
+// Igual que el mensual pero para cualquier rango [desde, hasta] (ej. el
+// trimestre del INCES): suma los recibos guardados en ese rango.
+export function calcularParafiscalesPeriodo(desdeISO, hastaISO) {
+  const C = state.CONFIG;
+  const periodos = state.PERIODOS.filter((p) => p.fecha >= desdeISO && p.fecha <= hastaISO);
+  const ids = Array.from(new Set(periodos.map((p) => p.empId)));
+  // Recibos viejos no guardaron la base: se despeja del monto y su alícuota.
+  const baseDe = (guardada, monto, pct) => (guardada !== undefined ? guardada : (pct > 0 ? monto / (pct / 100) : 0));
+  const filas = ids.map((empId) => {
+    const emp = state.EMPLEADOS.find((e) => e.id === empId);
+    if (!emp) return null;
+    const delEmp = periodos.filter((p) => p.empId === empId);
+    const ps = delEmp.map((p) => p.resultado);
+    const S = (fn) => ps.reduce((a, r) => a + (fn(r) || 0), 0);
+    // Días: dentro de cada mes se suman las quincenas (tope 30 por mes); en un
+    // rango de varios meses (ej. el trimestre del INCES) se suman los meses.
+    const diasPorMes = {};
+    delEmp.forEach((p) => { const m = p.fecha.slice(0, 7); diasPorMes[m] = (diasPorMes[m] || 0) + (p.resultado.diasPeriodo || 0); });
+    const dias = Object.values(diasPorMes).reduce((a, d) => a + Math.min(d, 30), 0);
+    return {
+      emp, recibos: ps.length,
+      dias,
+      salario: S((r) => r.salarioNormalPeriodo), bono: S((r) => r.cestaticketPeriodo),
+      inscrito: emp.inscritoIVSS !== false, declaradoIVSS: ps.some((r) => r.ivssBaseDeclarada),
+      baseIVSS: S((r) => baseDe(r.baseIVSS, r.ivssTrab, C.ivssTrabajador)),
+      baseRPE: S((r) => baseDe(r.baseRPE, r.rpeTrab, C.rpeTrabajador)),
+      baseFAOV: S((r) => baseDe(r.baseFAOV, r.faovTrab, C.faovTrabajador)),
+      // INCES patronal: es costo de la empresa (no se descuenta al trabajador), así que
+      // se calcula siempre sobre lo realmente devengado en el período — no sobre la
+      // base que haya guardado un recibo viejo (mensual y a la tasa de otra quincena).
+      baseINCES: S((r) => r.salarioNormalPeriodo),
+      ivssT: S((r) => r.ivssTrab), ivssP: S((r) => r.ivssPatrono),
+      rpeT: S((r) => r.rpeTrab), rpeP: S((r) => r.rpePatrono),
+      faovT: S((r) => r.faovTrab), faovP: S((r) => r.faovPatrono),
+      incesP: S((r) => r.salarioNormalPeriodo) * (C.incesPatrono / 100), islr: S((r) => r.islrTrab)
+    };
+  }).filter(Boolean).sort((a, b) => a.emp.nombre.localeCompare(b.emp.nombre));
+
+  const totales = {};
+  ['salario', 'bono', 'baseIVSS', 'baseRPE', 'baseFAOV', 'baseINCES', 'ivssT', 'ivssP', 'rpeT', 'rpeP', 'faovT', 'faovP', 'incesP', 'islr']
+    .forEach((k) => { totales[k] = filas.reduce((a, f) => a + f[k], 0); });
+  // INCES del trabajador (0,5%): se retiene al pagar las utilidades.
+  const utilidades = state.UTILIDADES_PAGADAS.filter((u) => u.fecha >= desdeISO && u.fecha <= hastaISO).map((u) => ({
+    emp: state.EMPLEADOS.find((e) => e.id === u.empId), fecha: u.fecha,
+    bruto: u.resultado.montoBruto, inces: u.resultado.incesTrabajador
+  })).filter((u) => u.emp);
+  return { filas, totales, recibosGuardados: periodos.length, utilidades };
 }
 
 // Tipos de nómina "especiales": utilidades, bono vacacional y bono de
@@ -483,13 +566,12 @@ function bonoAlimentacionYaPagadoEnMes(empId, fechaPeriodoISO) {
 // deja de pagar nada — se le paga la porción de esos días.
 export function calcularBonoAlimentacion(emp, fechaPeriodoISO) {
   const montoCompleto = cestaticketEmp(emp, fechaPeriodoISO);
-  const finEfectivo = fechaFinEfectivaPeriodo(emp, fechaPeriodoISO);
-  const inicioVentanaMes = sumarDias(fechaPeriodoISO, -29);
-  const inicioReal = emp.fechaIngreso && emp.fechaIngreso > inicioVentanaMes ? emp.fechaIngreso : inicioVentanaMes;
-  const dias = Math.min(diasEntreInclusive(inicioReal, finEfectivo), 30);
+  const mes = primerYUltimoDiaMes(fechaPeriodoISO);
+  const dias = diasEnVentana(emp, mes.primero, mes.ultimo, 30);
   const monto = montoCompleto * (dias / 30);
   const yaPagado = bonoAlimentacionYaPagadoEnMes(emp.id, fechaPeriodoISO);
-  const parcialPorEgreso = dias < 30 && finEfectivo !== fechaPeriodoISO;
+  const egreso = fechaEgresoEmp(emp);
+  const parcialPorEgreso = dias < 30 && !!egreso && egreso <= mes.ultimo;
   return { monto, dias, montoCompleto, yaPagado, parcialPorEgreso };
 }
 
@@ -532,7 +614,7 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
     // aparte, fraccionados, al egresar), este NO se liquida en ningún lado:
     // si no se incluye aquí, un empleado que egresó a mitad de mes se queda
     // sin cobrar los días que sí trabajó.
-    const activosBono = activos.concat(egresadosEnVentana(sumarDias(fechaPeriodoISO, -29), fechaPeriodoISO, departamento));
+    const activosBono = activos.concat(egresadosEnVentana(primerYUltimoDiaMes(fechaPeriodoISO).primero, fechaPeriodoISO, departamento));
     const filas = activosBono.map((emp) => ({ emp, kind: 'bonoalimentacion', r: calcularBonoAlimentacion(emp, fechaPeriodoISO) }));
     const totales = filas.reduce((a, f) => ({
       devengado: a.devengado + f.r.monto, deducciones: a.deducciones, neto: a.neto + f.r.monto, aportes: a.aportes
@@ -563,8 +645,15 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
   // caiga justo dentro de las fechas de este período) — calcularReciboNomina
   // se encarga de cobrarle solo hasta su fecha de egreso cuando sí cae
   // dentro, o el período completo si egresó después.
+  // En los tipos que cierran el mes (traen el bono de alimentación y/o las
+  // deducciones mensuales) también entra quien egresó en la quincena anterior
+  // del mismo mes: ya no tiene sueldo en este período, pero el bono y las
+  // deducciones del mes se calculan por los días que sí trabajó.
+  const cfgTipo = tipoNominaCfg(tipoPeriodo);
   const { desde: periodoDesde } = periodoNominal(tipoPeriodo, fechaPeriodoISO);
-  const activosNomina = activos.concat(egresadosEnVentana(periodoDesde, fechaPeriodoISO, departamento));
+  const desdeInclusion = (cfgTipo.incluyeCestaticket || cfgTipo.incluyeDeducciones)
+    ? primerYUltimoDiaMes(fechaPeriodoISO).primero : periodoDesde;
+  const activosNomina = activos.concat(egresadosEnVentana(desdeInclusion, fechaPeriodoISO, departamento));
 
   const filas = activosNomina.map((emp) => ({ emp, kind: 'nomina', r: calcularReciboNomina(emp, tipoPeriodo, fechaPeriodoISO) }));
   const totales = filas.reduce((a, f) => ({

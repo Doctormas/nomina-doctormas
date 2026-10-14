@@ -180,6 +180,7 @@ function parametrosHTML() {
         <div class="field"><label>Domicilio de la empresa</label><input name="domicilioLegal" value="${c.domicilioLegal || ''}" placeholder="Para el encabezado de contratos de trabajo"></div>
         <div class="field"><label>Representante legal (nombre)</label><input name="repLegalNombre" value="${c.repLegalNombre || ''}" placeholder="Quien firma los contratos de trabajo"></div>
         <div class="field"><label>Representante legal (cédula)</label><input name="repLegalCedula" value="${c.repLegalCedula || ''}"></div>
+        <div class="field"><label>Representante legal (cargo)</label><input name="repLegalCargo" value="${c.repLegalCargo || ''}" placeholder="Ej. Presidente — sale en contratos y constancias de trabajo"></div>
       </div>
       <h3>Nómina ordinaria</h3>
       <div class="grid cols-4">
@@ -199,7 +200,7 @@ function parametrosHTML() {
         <div class="field"><label>INCES trabajador (% solo sobre utilidades)</label><input type="number" step="0.01" name="incesTrabajador" value="${c.incesTrabajador}"></div>
         <div class="field"><label>INCES patrono (% trimestral sobre nómina)</label><input type="number" step="0.01" name="incesPatrono" value="${c.incesPatrono}"></div>
         <div class="field"><label>Ley de Protección de las Pensiones / DPP patrono (%)</label><input type="number" step="0.01" name="dppPatrono" value="${c.dppPatrono}"><div class="legal">100% patronal, recaudada por el SENIAT — la ley permite hasta 15%, actualmente fijada en 9%. Verifique la alícuota vigente antes de declarar.</div></div>
-        <div class="field"><label>Base mínima de cálculo DPP (por trabajador)</label><input type="number" step="0.01" name="dppBaseMinima" value="${c.dppBaseMinima}"><div class="legal">Art. 7 Ley DPP — si el trabajador gana menos que esto en el mes, el aporte de esa persona se calcula igual sobre este mínimo. Cifra vigente ≈ USD 240 (USD 40 cestaticket + USD 200 bono). Cambia con frecuencia.</div></div>
+        <div class="field"><label>Base mínima de cálculo DPP (por trabajador)</label><input type="number" step="0.01" name="dppBaseMinima" value="${c.dppBaseMinima}"><div class="legal">Déjelo en 0 para calcular la DPP solo con la fórmula de ley (9% sobre lo realmente pagado). Si pone un monto, el aporte de quien gane menos que eso en el mes se calcula igual sobre ese mínimo. Cifra vigente ≈ USD 240 (USD 40 cestaticket + USD 200 bono). Cambia con frecuencia.</div></div>
         <div class="field"><label>Moneda de la base mínima DPP</label>
           <select name="dppBaseMinimaMoneda"><option value="USD" ${c.dppBaseMinimaMoneda !== 'VES' ? 'selected' : ''}>Dólares (USD, según tasa del día de cada nómina)</option><option value="VES" ${c.dppBaseMinimaMoneda === 'VES' ? 'selected' : ''}>Bolívares (Bs.)</option></select>
         </div>
@@ -441,7 +442,7 @@ function wire(root, rerender) {
       e.preventDefault();
       const fd = new FormData(formConfig);
       for (const [k, v] of fd.entries()) {
-        if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula') state.CONFIG[k] = v;
+        if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula' || k === 'repLegalCargo') state.CONFIG[k] = v;
         else state.CONFIG[k] = Number(v);
       }
       await persistAll('Parámetros de configuración modificados');

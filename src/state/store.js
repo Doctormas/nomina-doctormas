@@ -10,7 +10,7 @@ function defaultConfig() {
     ivssPatrono: 10,                // % según riesgo: 9 mínimo / 10 medio / 11 máximo (LOPCYMAT) —
                                     // Doctormás está clasificado "RIESGO: 2" (medio) en su factura IVSS
     ivssTopeSalariosMinimos: 5,   // tope de cotización = 5 salarios mínimos
-    faovTrabajador: 1,            // % sobre salario integral (Ley Régimen Prestacional de Vivienda y Hábitat)
+    faovTrabajador: 1,            // % sobre salario normal del período (criterio de la empresa; Ley Régimen Prestacional de Vivienda y Hábitat)
     faovPatrono: 2,
     incesTrabajador: 0.5,         // % sobre utilidades únicamente
     incesPatrono: 2,              // % trimestral sobre nómina total (no se descuenta al trabajador salvo utilidades)
@@ -27,7 +27,7 @@ function defaultConfig() {
                                     // Base: total de pagos de nómina del mes (salario + bono de
                                     // alimentación y demás bonificaciones no salariales). Verifique la
                                     // alícuota vigente en el portal del SENIAT antes de declarar.
-    dppBaseMinima: 240,             // Base mínima de cálculo POR TRABAJADOR (Art. 7 Ley DPP): si lo que
+    dppBaseMinima: 0,               // Base mínima de cálculo POR TRABAJADOR (Art. 7 Ley DPP): si lo que
                                     // gana un empleado en el mes es menor a esto, el aporte de ESE
                                     // empleado igual se calcula sobre este mínimo, no sobre lo real. Cifra
                                     // vigente ~USD 240 (USD 40 Cestaticket + USD 200 "Bono de Guerra
@@ -43,21 +43,22 @@ function defaultConfig() {
     diasAdicionalAnualPorAno: 2,  // Art. 142 lit. b LOTTT (a partir del 2do año)
     diasAdicionalTope: 30,
     diasRetroactivoPorAno: 30,    // Art. 142 lit. c LOTTT (cálculo de garantía retroactiva al término)
-    tasaInteresAnual: 20,         // % anual estimado (BCV promedio activa/pasiva) — editable por el usuario
+    tasaInteresAnual: 47.5,       // % anual — BCV promedio activa/pasiva (jun-2026: 47,56%) — editable por el usuario
     nombreEmpresa: 'Centro de Atención Médica Inmediata de Salud CAMIS, C.A.',
     rif: 'J-502185640',
     repLegalNombre: 'José Ángel Báez Bello',  // nombre del representante legal de la empresa, para firmar contratos
     repLegalCedula: '21131072',
+    repLegalCargo: 'Presidente',    // cargo de quien firma contratos y constancias de trabajo
     domicilioLegal: '',            // domicilio de la empresa — para el encabezado del contrato de trabajo
     tiposNomina: {
       primera: {
-        label: 'Primera quincena (1–15) — Anticipo',
+        label: 'Primera quincena (1–15)',
         diasSueldo: 15,
         incluyeCestaticket: false,
-        incluyeDeducciones: false
+        incluyeDeducciones: true
       },
       segunda: {
-        label: 'Segunda quincena (16–30) — Cierre de mes',
+        label: 'Segunda quincena (16–30)',
         diasSueldo: 15,
         incluyeCestaticket: true,
         incluyeDeducciones: true
@@ -132,13 +133,42 @@ export const state = {
   loaded: false
 };
 
+// La DPP se calcula con la fórmula de ley (9% sobre lo realmente pagado), sin
+// base mínima por trabajador: el 240 USD viejo por defecto se pasa a 0.
+function corregirDPPBaseMinima() {
+  if (Number(state.CONFIG.dppBaseMinima) === 240) state.CONFIG.dppBaseMinima = 0;
+}
+
+// La tasa de interés de prestaciones venía con 20% por defecto, muy por debajo
+// de la real del BCV (~47,5%). Quien nunca la tocó se quedó con 20% guardado:
+// ese valor exacto se sube a 47,5% (en lo cargado y en lo que llegue de la nube).
+function corregirTasaInteres() {
+  if (Number(state.CONFIG.tasaInteresAnual) === 20) state.CONFIG.tasaInteresAnual = 47.5;
+}
+
+// Las deducciones (IVSS, RPE, FAOV, ISLR) ahora se calculan en cada quincena
+// sobre sus 15 días — antes la primera quincena era "anticipo sin
+// deducciones" y todo el mes se retenía en la segunda. Se corrige lo ya
+// guardado en Configuración (y lo que llegue de la nube) una sola vez.
+function corregirTiposNomina() {
+  const t = state.CONFIG.tiposNomina;
+  if (t && t.primera && t.primera.incluyeDeducciones === false) {
+    t.primera.incluyeDeducciones = true;
+    if (t.primera.label === 'Primera quincena (1–15) — Anticipo') t.primera.label = 'Primera quincena (1–15)';
+  }
+  if (t && t.segunda && t.segunda.label === 'Segunda quincena (16–30) — Cierre de mes') t.segunda.label = 'Segunda quincena (16–30)';
+}
+
 export async function loadState() {
   const data = await window.api.store.load();
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
   corregirNombreEmpresa();
+  corregirTasaInteres();
+  corregirDPPBaseMinima();
   state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
+  corregirTiposNomina();
   state.EMPLEADOS = data.EMPLEADOS || [];
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
@@ -226,9 +256,12 @@ export async function restaurarRespaldoAuto(id) {
   const data = snap.datos;
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
   corregirNombreEmpresa();
+  corregirTasaInteres();
+  corregirDPPBaseMinima();
   state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
+  corregirTiposNomina();
   state.EMPLEADOS = data.EMPLEADOS || [];
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
@@ -282,9 +315,12 @@ export async function applyFullState(data) {
   state.APPLYING_REMOTE = true;
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
   corregirNombreEmpresa();
+  corregirTasaInteres();
+  corregirDPPBaseMinima();
   state.CONFIG.tiposNomina = data.CONFIG && data.CONFIG.tiposNomina
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
+  corregirTiposNomina();
   state.EMPLEADOS = data.EMPLEADOS || [];
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];

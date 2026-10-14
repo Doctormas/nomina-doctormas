@@ -1,17 +1,24 @@
 import { state, persistAll, empresaConRif } from '../state/store.js';
 import { logoHeaderHTML } from '../lib/logo.js';
-import { construirInformeAportesHTML, construirInformeARIHTML, construirInformeARCHTML, construirInformeDPPHTML, informeConAcciones } from '../lib/informes.js';
+import { TRIBUTOS, construirInformeTributoHTML, construirInformeParafiscalesMesHTML, construirInformeAportesHTML, construirInformeARIHTML, construirInformeARCHTML, construirInformeDPPHTML, informeConAcciones } from '../lib/informes.js';
 import { calcularPorcentajeARI, TARIFA_1, UT_VALOR_BS_REF, DESGRAVAMEN_UNICO_UT } from '../lib/ari.js';
 import { estimarIngresoAnualEmp } from '../lib/calculos.js';
 import { fmtNum, fmtDate, todayStr } from '../lib/formato.js';
 import { toast } from '../components/toast.js';
+import { confirmDialog } from '../components/confirm.js';
 
 const MODULOS = [
-  { id: 'aportes', label: 'Aportes patronales' },
+  { id: 'mensual', label: 'Resumen del mes' },
+  { id: 'ivss', label: 'IVSS' },
+  { id: 'rpe', label: 'RPE' },
+  { id: 'faov', label: 'FAOV' },
+  { id: 'inces', label: 'INCES' },
+  { id: 'islrRet', label: 'ISLR retenciones' },
   { id: 'dpp', label: 'DPP' },
-  { id: 'islr', label: 'ISLR (AR-I / AR-C)' }
+  { id: 'islr', label: 'AR-I / AR-C' },
+  { id: 'aportes', label: 'Histórico por rango' }
 ];
-let MODULO_ACTIVO = 'aportes';
+let MODULO_ACTIVO = 'mensual';
 
 // El AR-I se recalcula por trimestre (aunque legalmente se puede recalcular
 // en cualquier momento que cambie el ingreso) — esto solo identifica cuál
@@ -27,7 +34,50 @@ function finTrimestreISO(trimestre, ano) {
   return `${ano}-${String(mesFin).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
 }
 
+function mensualHTML() {
+  const mesDefault = todayStr().slice(0, 7);
+  return `
+  <div class="card">
+    <h2>Informe mensual de parafiscales</h2>
+    <div class="desc">Suma lo <b>devengado salarial</b> de cada trabajador en el mes (con los recibos guardados de nómina) y aplica a ese total, a 30 días, IVSS, RPE, FAOV, INCES e ISLR — separando lo que se retiene al trabajador de lo que aporta la empresa. El bono de alimentación no es salarial, así que no entra en la base. Es el informe para armar las declaraciones del mes.</div>
+    <div class="grid cols-3">
+      <div class="field"><label>Mes</label><input type="month" id="parafMesInforme" value="${mesDefault}"></div>
+      <div class="field" style="align-self:end;"><button class="btn" id="btnGenerarParafMes">Generar informe</button></div>
+    </div>
+    <div id="parafMesResultado"></div>
+  </div>`;
+}
+
+// Pestaña de un tributo: su propia periodicidad (mensual / trimestral) y su
+// propio informe para declarar.
+function tributoHTML(id) {
+  const t = TRIBUTOS[id];
+  const C = state.CONFIG;
+  const hoy = new Date();
+  const trim = Math.floor(hoy.getMonth() / 3) + 1;
+  const alic = [t.pctT ? `trabajador ${C[t.pctT]}%` : null, t.pctP ? `patrono ${C[t.pctP]}%` : null].filter(Boolean).join(' · ');
+  const selector = t.frecuencia === 'trimestral'
+    ? `<div class="field"><label>Trimestre</label><select id="tribTrim_${id}">
+         ${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === trim ? 'selected' : ''}>${TRIMESTRE_LABELS[n]}</option>`).join('')}
+       </select></div>
+       <div class="field"><label>Año</label><input type="number" id="tribAno_${id}" value="${hoy.getFullYear()}"></div>`
+    : `<div class="field"><label>Mes</label><input type="month" id="tribMes_${id}" value="${todayStr().slice(0, 7)}"></div>`;
+  return `
+  <div class="card">
+    <h2>${t.label}</h2>
+    <div class="desc"><b>Ente:</b> ${t.ente}. <b>Declaración:</b> ${t.frecuencia}${alic ? ` · <b>Alícuotas:</b> ${alic}` : ''}.<br>${t.baseTxt} El informe suma los recibos de nómina guardados del período, separando la retención al trabajador del aporte patronal.</div>
+    <div class="grid cols-3">
+      ${selector}
+      <div class="field" style="align-self:end;"><button class="btn" id="btnTrib_${id}">Generar informe</button></div>
+    </div>
+    <div id="tribRes_${id}"></div>
+  </div>`;
+}
+
 function moduloHTML() {
+  if (MODULO_ACTIVO === 'mensual') return mensualHTML();
+  if (['ivss', 'rpe', 'faov', 'inces'].includes(MODULO_ACTIVO)) return tributoHTML(MODULO_ACTIVO);
+  if (MODULO_ACTIVO === 'islrRet') return tributoHTML('islr');
   if (MODULO_ACTIVO === 'aportes') return aportesHTML();
   if (MODULO_ACTIVO === 'dpp') return dppHTML();
   return islrHTML();
@@ -74,7 +124,7 @@ function aportesHTML() {
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
         <div class="desc" style="margin-bottom:4px;">FAOV / BANAVIH patrono</div>
         <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.faovPatrono}%</div>
-        <div class="legal">Sobre salario integral</div>
+        <div class="legal">Sobre salario normal del mes</div>
       </div>
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
         <div class="desc" style="margin-bottom:4px;">RPE patrono — Pérdida Involuntaria del Empleo</div>
@@ -104,7 +154,7 @@ function dppHTML() {
       </div>
       <div class="card" style="margin-bottom:0;padding:14px 16px;">
         <div class="desc" style="margin-bottom:4px;">Base mínima por trabajador</div>
-        <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.dppBaseMinima} ${state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.'}</div>
+        <div style="font-size:1.3rem;font-weight:700;color:var(--burgundy);">${state.CONFIG.dppBaseMinima > 0 ? state.CONFIG.dppBaseMinima + ' ' + (state.CONFIG.dppBaseMinimaMoneda === 'USD' ? 'USD' : 'Bs.') : 'Sin base mínima'}</div>
         <div class="legal">Art. 7 Ley DPP — si un trabajador ganó menos que esto en el mes, su aporte igual se calcula sobre este mínimo.</div>
       </div>
     </div>
@@ -177,6 +227,7 @@ function islrHTML() {
     <div class="btn-row">
       <button class="btn" id="btnGenerarInfARI">Generar listado</button>
       <button class="btn secondary" id="btnAbrirPlanillaARI">⇪ Abrir planilla AR-I del SENIAT</button>
+      <button class="btn ghost" id="btnIslrCeroTodos" title="Pone 0% de retención de ISLR a todos los trabajadores">Poner ISLR en 0% a todo el personal</button>
     </div>
     <div class="note" style="margin-top:12px;">El PDF/Excel que descarga la calculadora de arriba sigue las mismas casillas (A, B, D/E, F, G, H, I, J) y la misma Tarifa 1 de la planilla oficial AR-I — sirve para calcular el % y como respaldo firmado. El botón de aquí abajo lleva al portal del SENIAT por si en algún momento necesita la planilla en blanco tal cual la publica el organismo (Asistencia al contribuyente → Formularios → Formatos Electrónicos → Formato ARI).</div>
     <div id="parafARIResultado"></div>
@@ -422,6 +473,44 @@ function wire(root) {
     cont.appendChild(informeConAcciones({ contenidoHtml, filename: `parafiscales-${todayStr()}.pdf`, pdfTitle: 'Parafiscales', csvHeaders, csvRows }));
   });
 
+  Object.keys(TRIBUTOS).forEach((id) => {
+    const btn = root.querySelector(`#btnTrib_${id}`);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const t = TRIBUTOS[id];
+      let desde, hasta, etiqueta, archivo;
+      if (t.frecuencia === 'trimestral') {
+        const trim = Number(root.querySelector(`#tribTrim_${id}`).value);
+        const ano = Number(root.querySelector(`#tribAno_${id}`).value) || new Date().getFullYear();
+        const mesIni = (trim - 1) * 3 + 1;
+        desde = `${ano}-${String(mesIni).padStart(2, '0')}-01`;
+        hasta = finTrimestreISO(trim, ano);
+        etiqueta = `${TRIMESTRE_LABELS[trim]} ${ano}`;
+        archivo = `${id}-T${trim}-${ano}`;
+      } else {
+        const mes = root.querySelector(`#tribMes_${id}`).value;
+        if (!mes) { toast('Seleccione el mes.', 'error'); return; }
+        desde = `${mes}-01`; hasta = `${mes}-31`;
+        etiqueta = `mes ${mes}`;
+        archivo = `${id}-${mes}`;
+      }
+      const { contenidoHtml, csvHeaders, csvRows } = construirInformeTributoHTML(id, etiqueta, desde, hasta);
+      const cont = root.querySelector(`#tribRes_${id}`);
+      cont.innerHTML = '';
+      cont.appendChild(informeConAcciones({ contenidoHtml, filename: `${archivo}.pdf`, pdfTitle: t.label, csvHeaders, csvRows }));
+    });
+  });
+
+  const btnGenerarParafMes = root.querySelector('#btnGenerarParafMes');
+  if (btnGenerarParafMes) btnGenerarParafMes.addEventListener('click', () => {
+    const mesISO = root.querySelector('#parafMesInforme').value;
+    if (!mesISO) { toast('Seleccione el mes.', 'error'); return; }
+    const { contenidoHtml, csvHeaders, csvRows } = construirInformeParafiscalesMesHTML(mesISO);
+    const cont = root.querySelector('#parafMesResultado');
+    cont.innerHTML = '';
+    cont.appendChild(informeConAcciones({ contenidoHtml, filename: `parafiscales-mes-${mesISO}.pdf`, pdfTitle: 'Parafiscales del mes', csvHeaders, csvRows }));
+  });
+
   const btnGenerarDPP = root.querySelector('#btnGenerarDPP');
   if (btnGenerarDPP) btnGenerarDPP.addEventListener('click', () => {
     const mesISO = root.querySelector('#dppMes').value;
@@ -430,6 +519,20 @@ function wire(root) {
     const cont = root.querySelector('#dppResultado');
     cont.innerHTML = '';
     cont.appendChild(informeConAcciones({ contenidoHtml, filename: `dpp-${mesISO}.pdf`, pdfTitle: 'DPP', csvHeaders, csvRows }));
+  });
+
+  const btnIslrCeroTodos = root.querySelector('#btnIslrCeroTodos');
+  if (btnIslrCeroTodos) btnIslrCeroTodos.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'ISLR en 0% para todo el personal',
+      message: `¿Poner en 0% la retención de ISLR de los ${state.EMPLEADOS.length} trabajadores? No se les retendrá ISLR en las próximas nóminas (lo ya guardado no cambia). Luego use "Guardar" para compartirlo con el equipo.`,
+      confirmLabel: 'Poner en 0%', danger: false
+    });
+    if (!ok) return;
+    state.EMPLEADOS.forEach((e) => { e.islrPorcentaje = 0; });
+    await persistAll('ISLR en 0%: todo el personal');
+    toast('Retención de ISLR en 0% para todo el personal.', 'success');
+    render(root);
   });
 
   const btnAbrirPlanillaARI = root.querySelector('#btnAbrirPlanillaARI');

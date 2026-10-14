@@ -1,5 +1,5 @@
 import { state, persistAll, empresaConRif } from '../state/store.js';
-import { logoHeaderHTML } from '../lib/logo.js';
+import { construirLiquidacionDetalladaHTML } from '../lib/liquidacionDetalle.js';
 import { calcularLiquidacion } from '../lib/calculos.js';
 import { fmt } from '../lib/moneda.js';
 import { fmtDate, fmtNum, todayStr, uid } from '../lib/formato.js';
@@ -80,23 +80,7 @@ function historialHTML() {
 }
 
 function construirLiquidacionHTML(emp, fecha, causa, L) {
-  return `
-    <div>
-      ${logoHeaderHTML()}
-      <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Liquidación de ${emp.nombre}</h3>
-      <div class="legal">Fecha de egreso: ${fmtDate(fecha)} · Causa: ${(CAUSA_LABELS[causa] || causa).toLowerCase()}</div>
-      <table style="margin-top:8px;">
-        <tbody>
-          <tr><td>Prestaciones sociales (mayor entre acumulado y retroactivo + intereses)</td><td>${fmt(L.prest.montoAPagar, fecha)}</td></tr>
-          <tr><td>Vacaciones vencidas no disfrutadas (${L.vac.pendientesTotal} días)</td><td>${fmt(L.vacacionesPendientesMonto, fecha)}</td></tr>
-          <tr><td>Vacaciones fraccionadas del año en curso (${fmtNum(L.vac.fraccionVac, 1)} días)</td><td>${fmt(L.vacacionesFraccionadasMonto, fecha)}</td></tr>
-          <tr><td>Bono vacacional fraccionado (${fmtNum(L.vac.fraccionBono, 1)} días)</td><td>${fmt(L.bonoVacFraccionadoMonto, fecha)}</td></tr>
-          <tr><td>Utilidades fraccionadas (${fmtNum(L.util.diasProporcion, 1)} días)</td><td>${fmt(L.utilidadesFraccionadasMonto, fecha)}</td></tr>
-          ${causa === 'despido_injustificado' ? `<tr><td>Indemnización por despido injustificado (Art. 92 LOTTT)</td><td>${fmt(L.indemnizacionDespidoInjustificado, fecha)}</td></tr>` : ''}
-        </tbody>
-      </table>
-      <div class="totals"><div class="item"><div class="lbl">Total liquidación</div><div class="val">${fmt(L.totalGeneral, fecha)}</div></div></div>
-    </div>`;
+  return construirLiquidacionDetalladaHTML(emp, fecha, causa, CAUSA_LABELS[causa] || causa, L);
 }
 
 function wire(root, rerender) {

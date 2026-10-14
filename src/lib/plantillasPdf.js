@@ -63,7 +63,7 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
         <thead><tr><th>Devengado</th><th>Salario diario</th><th>Días</th><th>Total</th></tr></thead>
         <tbody>
           <tr><td>Salario del período${r.periodoParcial ? (r.periodoParcialPorEgreso ? ' (parcial — egresó a mitad del período)' : ' (parcial — ingresó a mitad del período)') : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
-          <tr><td>Bono de alimentación (no salarial)${r.bonoAlimPagadoAparte ? ' — pagado por separado este mes' : ''}</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
+          <tr><td>Bono de alimentación (no salarial)${r.bonoAlimPagadoAparte ? ' — pagado por separado este mes' : (r.diasBonoMes < 30 && r.cestaticketPeriodo > 0 ? ` — ${r.diasBonoMes} de 30 días` : '')}</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
           <tr><td><b>Total devengado</b></td><td></td><td></td><td><b>${fmt(r.totalDevengado, fecha)}</b></td></tr>
         </tbody>
       </table>
@@ -72,7 +72,7 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
         <tbody>
           <tr><td>IVSS (${state.CONFIG.ivssTrabajador}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.ivssTrab, fecha)}</td></tr>
           <tr><td>RPE — Pérdida Involuntaria del Empleo (${state.CONFIG.rpeTrabajador}%)${r.inscritoIVSS ? '' : ' — no inscrito, no cotiza'}</td><td>${fmt(r.rpeTrab, fecha)}</td></tr>
-          <tr><td>FAOV (${state.CONFIG.faovTrabajador}% s/ salario integral)</td><td>${fmt(r.faovTrab, fecha)}</td></tr>
+          <tr><td>FAOV (${state.CONFIG.faovTrabajador}% s/ salario normal del mes)</td><td>${fmt(r.faovTrab, fecha)}</td></tr>
           ${r.islrTrab ? `<tr><td>ISLR (AR-I)</td><td>${fmt(r.islrTrab, fecha)}</td></tr>` : ''}
           <tr><td><b>Total deducciones</b></td><td><b>${fmt(r.totalDeducciones, fecha)}</b></td></tr>
         </tbody>
@@ -191,18 +191,34 @@ function tituloYFilasResumen(tipoPeriodo, fecha, filas, kind) {
       filasHtml
     };
   }
+  const n = (v) => fmt(v, fecha).replace(/^Bs\. /, '');
   const filasHtml = filas.map(({ emp, r }) => `<tr>
-    <td>${emp ? emp.nombre : '—'}${r.inscritoIVSS ? '' : ' <span class="tag err">no inscrito IVSS</span>'}${r.periodoParcialPorEgreso ? ' <span class="tag err">egresó</span>' : ''}</td>
-    <td>${emp ? fmtDate(emp.fechaIngreso) : '—'}${r.periodoParcial ? ' <span class="tag warn">parcial</span>' : ''}</td>
-    <td>${emp ? (emp.cargo || '—') : '—'}</td><td>${fmt(r.totalDevengado, fecha)}</td><td>${fmt(r.totalDeducciones, fecha)}</td>
-    <td><b>${fmt(r.neto, fecha)}</b></td><td>${fmt(r.aportesPatronales, fecha)}</td>
+    <td><b>${emp ? emp.nombre : '—'}</b>${r.inscritoIVSS ? '' : ' <span class="tag err">no inscrito IVSS</span>'}${r.periodoParcialPorEgreso ? ' <span class="tag err">egresó</span>' : (r.periodoParcial ? ' <span class="tag warn">ingresó</span>' : '')}<div class="legal">${emp ? (emp.cargo || '—') : ''}</div></td>
+    <td style="text-align:center;">${r.diasPeriodo}</td>
+    <td>${n(r.salarioNormalPeriodo)}</td><td>${n(r.cestaticketPeriodo)}</td><td><b>${n(r.totalDevengado)}</b></td>
+    <td>${n(r.ivssTrab)}</td><td>${n(r.rpeTrab)}</td><td>${n(r.faovTrab)}</td><td>${n(r.islrTrab)}</td>
+    <td>${n(r.totalDeducciones)}</td><td><b>${n(r.neto)}</b></td><td>${n(r.aportesPatronales)}</td>
   </tr>`).join('');
   const { desde, hasta } = periodoNominal(tipoPeriodo, fecha);
+  const u = state.DISPLAY_CURRENCY === 'USD' ? 'US$' : 'Bs.';
   return {
     subtitulo: `${tipoNominaCfg(tipoPeriodo).label} · desde ${fmtDateGuion(desde)} hasta ${fmtDateGuion(hasta)} · Fecha de corte: ${fmtDate(fecha)} · ${filas.length} empleados`,
-    encabezados: ['Empleado', 'Fecha de ingreso', 'Cargo', 'Devengado', 'Deducciones', 'Neto', 'Aportes patronales'],
+    encabezados: ['Empleado', 'Días', `Salario (${u})`, `Bono alim. (${u})`, `Devengado (${u})`, 'IVSS', 'RPE', 'FAOV', 'ISLR', `Deducc. (${u})`, `Neto (${u})`, `Aportes patronales (${u})`],
     filasHtml
   };
+}
+
+// Quién entró o salió dentro del período y por cuántos días se le pagó. Los
+// totales por concepto y por ente (parafiscales) viven en Parafiscales →
+// Informe mensual, no en el resumen de la corrida.
+function parcialesNominaHTML(tipoPeriodo, filas) {
+  const cfg = tipoNominaCfg(tipoPeriodo);
+  const parciales = filas.filter(({ r }) => r.periodoParcial);
+  if (!parciales.length) return '';
+  return `<div style="margin-top:12px;"><div class="legal"><b>Trabajadores pagados por días trabajados (ingreso o egreso dentro del período):</b></div>
+    <table><thead><tr><th>Trabajador</th><th>Motivo</th><th>Ingreso</th><th>Egreso</th><th style="text-align:center;">Días sueldo</th><th style="text-align:center;">Días bono (de 30)</th></tr></thead><tbody>
+    ${parciales.map(({ emp, r }) => `<tr><td>${emp ? emp.nombre : '—'}</td><td>${r.periodoParcialPorEgreso ? 'Egresó dentro del período' : 'Ingresó dentro del período'}</td><td>${emp ? fmtDate(emp.fechaIngreso) : '—'}</td><td>${emp && emp.egreso && emp.egreso.fecha ? fmtDate(emp.egreso.fecha) : '—'}</td><td style="text-align:center;">${r.diasPeriodo}</td><td style="text-align:center;">${cfg.incluyeCestaticket ? (r.diasBonoMes === undefined ? '—' : r.diasBonoMes) : '—'}</td></tr>`).join('')}
+    </tbody></table></div>`;
 }
 
 export function construirResumenCorridaHTML(tipoPeriodo, fecha, filas, kind) {
@@ -222,8 +238,10 @@ export function construirResumenCorridaHTML(tipoPeriodo, fecha, filas, kind) {
       <h2 style="margin-top:0;">${empresaConRif()} — Resumen${tituloKind}</h2>
       <div class="desc">${subtitulo}</div>
       ${hayUSD ? `<div class="legal">Tasa BCV aplicada (fecha de corte): ${fmtNum(tasaBCV, 2)} Bs./USD — usada para quien tiene el salario o el bono de alimentación fijado en dólares</div>` : ''}
-      <table style="margin-top:10px;"><thead><tr>${encabezados.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${filasHtml}</tbody></table>
+      <style>.resdet table.det th,.resdet table.det td{padding:3px 4px;font-size:8px;}.resdet table.det th{font-size:6.5px;}.resdet table.det td:not(:first-child){text-align:right;}.resdet table.det td:nth-child(2){text-align:center;}</style>
+      <div class="resdet"><table class="${kind === 'nomina' ? 'det' : ''}" style="margin-top:10px;"><thead><tr>${encabezados.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${filasHtml}</tbody></table></div>
+      ${kind === 'nomina' ? parcialesNominaHTML(tipoPeriodo, filas) : ''}
       <div class="totals">
         <div class="item"><div class="lbl">Total devengado</div><div class="val">${fmt(totales.devengado, fecha)}</div></div>
         ${(kind !== 'bonovacacional' && kind !== 'bonoalimentacion') ? `<div class="item"><div class="lbl">Total deducciones</div><div class="val">${fmt(totales.deducciones, fecha)}</div></div>` : ''}

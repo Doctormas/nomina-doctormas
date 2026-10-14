@@ -4,6 +4,7 @@ import { getTasaActualValor, tasaEnFecha, tipoNominaCfg, empresaConRif } from '.
 import { fmt } from '../lib/moneda.js';
 import { fmtDate, fmtNum, todayStr, uid, parseDate } from '../lib/formato.js';
 import { logoHeaderHTML } from '../lib/logo.js';
+import { constanciaTrabajoHTML } from '../lib/constancia.js';
 import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
 import { plantillaEmpleadosPayload, mapearFilasBulk, validarRegistroBulk } from '../lib/bulkEmpleados.js';
@@ -212,6 +213,7 @@ function empleadoFormModal(emp, idParaNuevo) {
     { id: 'parafiscales', label: 'Parafiscales' },
     { id: 'documentos', label: 'Documentos' },
     { id: 'contrato', label: 'Contrato' },
+    { id: 'constancia', label: 'Constancia' },
     { id: 'egreso', label: 'Egreso' }
   ];
   const empTabsHtml = empTabs.map((t, i) => `<button type="button" data-emptab="${t.id}" class="${i === 0 ? 'active' : ''}">${t.label}</button>`).join('');
@@ -442,6 +444,20 @@ function empleadoFormModal(emp, idParaNuevo) {
           </div>
           <div class="note" style="margin-bottom:8px;">Se recomienda guardar la ficha (botón Guardar) antes de generar el contrato, para que quede registrado lo que se cargó en las demás pestañas.</div>
           <button type="button" class="btn" id="btnGenerarContrato">⇩ Generar contrato (Word)</button>
+        </div>
+
+        <div class="emp-tab-panel" data-emptab-panel="constancia" hidden>
+          <div class="desc">Genera la constancia de trabajo del empleado en PDF, con los datos que ya tiene su ficha (nombre, cédula, ingreso, cargo, sueldo) y el representante legal de Configuración. Si el estado es "Egresado" con fecha de egreso, dice "prestó sus servicios hasta…"; si no, "presta sus servicios hasta la presente fecha".</div>
+          <div class="grid cols-2">
+            <div class="field"><label>Dirigida a (opcional)</label><input id="constanciaDestinatario" placeholder="Ej. A quien pueda interesar / Banco ..."></div>
+            <div class="field"><label>Incluir sueldo</label>
+              <select id="constanciaIncluirSueldo"><option value="si">Sí, con sueldo básico mensual</option><option value="no">No, sin sueldo</option></select>
+            </div>
+            <div class="field"><label>Lugar de emisión</label><input id="constanciaLugar" value="Caracas"></div>
+            <div class="field"><label>Fecha de emisión</label><input type="date" id="constanciaFecha" value="${todayStr()}"></div>
+          </div>
+          <div class="field"><label>Texto adicional (opcional)</label><textarea id="constanciaObservaciones" rows="2" placeholder="Se agrega como un párrafo más, antes de la fecha y la firma"></textarea></div>
+          <button type="button" class="btn" id="btnGenerarConstancia">⇩ Generar constancia de trabajo (PDF)</button>
         </div>
 
         <div class="emp-tab-panel" data-emptab-panel="egreso" hidden>
@@ -747,6 +763,27 @@ function openEmpModal(emp, rerender) {
     const nombreArchivo = `Contrato-${(fd.get('nombre') || 'empleado').replace(/\s+/g, '-')}-${todayStr()}.docx`;
     const res = await window.api.contrato.export(datos, nombreArchivo);
     if (!res.canceled) toast('Contrato guardado: ' + res.filePath, 'success');
+  });
+
+  const btnGenerarConstancia = document.getElementById('btnGenerarConstancia');
+  if (btnGenerarConstancia) btnGenerarConstancia.addEventListener('click', async () => {
+    const fd = new FormData(document.getElementById('formEmpleado'));
+    const esUSD = fd.get('monedaSalario') === 'USD';
+    const salario = Number(fd.get('salarioBase')) || 0;
+    const incluirSueldo = document.getElementById('constanciaIncluirSueldo').value === 'si';
+    const egresado = fd.get('estado') === 'egresado' && fd.get('egresoFecha');
+    const html = constanciaTrabajoHTML({
+      nombre: fd.get('nombre'), cedula: fd.get('cedula'), nacionalidad: fd.get('nacionalidad'), cargo: fd.get('cargo'),
+      fechaIngreso: fd.get('fechaIngreso'), fechaEgreso: egresado ? fd.get('egresoFecha') : '',
+      salarioTexto: incluirSueldo ? (esUSD ? `US$ ${fmtNum(salario, 2)}` : `Bs. ${fmtNum(salario, 2)}`) : '',
+      destinatario: document.getElementById('constanciaDestinatario').value,
+      observaciones: document.getElementById('constanciaObservaciones').value,
+      lugar: document.getElementById('constanciaLugar').value || 'Caracas',
+      fechaEmision: document.getElementById('constanciaFecha').value || todayStr()
+    });
+    const nombreArchivo = `Constancia-de-trabajo-${(fd.get('nombre') || 'empleado').replace(/\s+/g, '-')}-${todayStr()}.pdf`;
+    const res = await window.api.pdf.export(html, 'Constancia de trabajo', nombreArchivo);
+    if (!res.canceled) toast('Constancia guardada: ' + res.filePath, 'success');
   });
 
   document.getElementById('btnCancelEmp').addEventListener('click', async () => {
