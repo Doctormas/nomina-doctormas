@@ -6,6 +6,7 @@ function defaultConfig() {
     salarioMinimo: 130,          // Bs./mes — salario mínimo legal vigente (Art. 129 LOTTT)
     cestaticket: 0,               // monto mensual del bono de alimentación, NO salarial (Ley Cestaticket)
     cestaticketMoneda: 'USD',     // 'VES' o 'USD' — moneda en que se fija el bono de alimentación
+    historialCestaticket: [],     // [{ id, fecha, monto, moneda }] — qué bono general regía desde cada fecha
     ivssTrabajador: 4,            // % fijo, Art. 66 Ley del Seguro Social
     ivssPatrono: 10,                // % según riesgo: 9 mínimo / 10 medio / 11 máximo (LOPCYMAT) —
                                     // Doctormás está clasificado "RIESGO: 2" (medio) en su factura IVSS
@@ -114,6 +115,16 @@ export const state = {
   // guardan solo las últimas MAX_RESPALDOS_AUTO y NO se comparten al
   // sincronizar con el equipo (quedan solo en este computador).
   RESPALDOS_AUTO: [],
+  // Nómina paralela (bonos propios de la dirección): pagos. Vive SOLO en
+  // este computador — no entra a la sincronización con el equipo, ni al
+  // historial compartido, ni a los respaldos automáticos.
+  PARALELA: { pinHash: '', salt: '', pagos: [] },
+  // Usuarios y tipos de usuario (permisos por módulo). Se comparten al
+  // sincronizar para que las mismas cuentas sirvan en todos los equipos.
+  USUARIOS: [],
+  ROLES: [],
+  // Usuario con sesión iniciada — solo en memoria, se pide al abrir la app.
+  SESION: null,
   // Correlativo único para el "N° de recibo" de todo recibo de pago que se
   // guarda en el historial (nómina, utilidades, bono vacacional) — nunca se
   // reutiliza ni se reinicia, aunque se borre un registro después.
@@ -180,6 +191,9 @@ export async function loadState() {
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
   state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
   state.RESPALDOS_AUTO = data.RESPALDOS_AUTO || [];
+  state.PARALELA = Object.assign({ pinHash: '', salt: '', pagos: [] }, data.PARALELA || {});
+  state.USUARIOS = data.USUARIOS || [];
+  state.ROLES = (data.ROLES && data.ROLES.length) ? data.ROLES : rolesPorDefecto();
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
   if (data.TASA) state.TASA = Object.assign(state.TASA, data.TASA);
   if (state.TASA.fuentes && state.TASA.fuentes.length) {
@@ -191,6 +205,7 @@ export async function loadState() {
   if (data.SYNC) state.SYNC = Object.assign(state.SYNC, data.SYNC);
   state.DISPLAY_CURRENCY = data.DISPLAY_CURRENCY || 'VES';
   state.SIDEBAR_COLLAPSED = !!data.SIDEBAR_COLLAPSED;
+  state.CAMBIOS_SIN_SINCRONIZAR = !!data.CAMBIOS_SIN_SINCRONIZAR;
   state.loaded = true;
 }
 
@@ -202,8 +217,10 @@ function collectStorageDoc() {
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
+    PARALELA: state.PARALELA,
+    USUARIOS: state.USUARIOS, ROLES: state.ROLES,
     PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
-    TASA: state.TASA, SYNC: state.SYNC,
+    TASA: state.TASA, SYNC: state.SYNC, CAMBIOS_SIN_SINCRONIZAR: !!state.CAMBIOS_SIN_SINCRONIZAR,
     DISPLAY_CURRENCY: state.DISPLAY_CURRENCY, SIDEBAR_COLLAPSED: state.SIDEBAR_COLLAPSED
   };
 }
@@ -231,7 +248,7 @@ function idCorto() {
 function registrarCambio(seccion) {
   const id = idCorto();
   const fecha = new Date().toISOString();
-  const actor = state.SYNC.actor || 'Sin nombre';
+  const actor = (state.SESION && state.SESION.nombre) || state.SYNC.actor || 'Sin nombre';
   state.HISTORIAL_CAMBIOS.unshift({ id, fecha, actor, seccion });
   if (state.HISTORIAL_CAMBIOS.length > MAX_HISTORIAL_CAMBIOS) state.HISTORIAL_CAMBIOS.length = MAX_HISTORIAL_CAMBIOS;
 
@@ -287,14 +304,26 @@ export function tomarNumeroRecibo() {
   return String(n);
 }
 
+// Tipos de usuario que se crean la primera vez; el master los puede editar o borrar.
+// (El tipo "master" es fijo y ve todo — no figura en esta lista.)
+export function rolesPorDefecto() {
+  return [
+    { id: 'admin', nombre: 'Administrador', modulos: ['dashboard', 'empleados', 'nomina', 'parafiscales', 'vacaciones', 'prestaciones', 'liquidacion', 'config'] },
+    { id: 'contabilidad', nombre: 'Contabilidad', modulos: ['dashboard', 'nomina', 'parafiscales', 'vacaciones', 'prestaciones', 'liquidacion'] },
+    { id: 'consulta', nombre: 'Consulta', modulos: ['dashboard', 'empleados'] }
+  ];
+}
+
 /** @param {string} [seccion] Descripción corta de qué se guardó (ej. "Ficha
  * editada: Juan Pérez") — si se pasa, queda en el Historial de
  * modificaciones. Se omite en guardados automáticos/internos (tasa del día,
  * la sincronización en sí) para que el historial solo muestre cambios reales. */
 export async function persistAll(seccion) {
   if (seccion) registrarCambio(seccion);
-  await window.api.store.save(collectStorageDoc());
+  // Se marca ANTES de guardar: así el archivo local recuerda que hay cambios
+  // sin subir a la nube, y al abrir la app no se pisan con lo del servidor.
   if (syncConfigured() && !state.APPLYING_REMOTE) marcarCambiosSinSincronizar();
+  await window.api.store.save(collectStorageDoc());
 }
 
 // Subconjunto que sí se comparte al sincronizar con el equipo (no incluye
@@ -306,7 +335,8 @@ export function collectFullState() {
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
-    HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO
+    HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
+    USUARIOS: state.USUARIOS, ROLES: state.ROLES
   };
 }
 
@@ -331,6 +361,10 @@ export async function applyFullState(data) {
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
   state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
+  // Nunca se pisan las cuentas locales con "nada": una versión anterior de la
+  // app (o un respaldo viejo) sube el documento sin usuarios.
+  if (Array.isArray(data.USUARIOS) && data.USUARIOS.length) state.USUARIOS = data.USUARIOS;
+  if (Array.isArray(data.ROLES) && data.ROLES.length) state.ROLES = data.ROLES;
   // El mayor entre lo local y lo remoto — nunca retrocede el correlativo,
   // aunque el otro equipo no lo haya subido en esta sincronización.
   state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);

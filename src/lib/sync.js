@@ -2,6 +2,13 @@
 // misma API y mismo protocolo (X-Access-Pin) del archivo original.
 import { state, syncConfigured, collectFullState, applyFullState, persistAll } from '../state/store.js';
 
+// Guardar el estado local como consecuencia de sincronizar no cuenta como
+// "cambio nuevo sin subir" — si no, el botón quedaría siempre pendiente.
+async function persistSinMarcar() {
+  state.APPLYING_REMOTE = true;
+  try { await persistAll(); } finally { state.APPLYING_REMOTE = false; }
+}
+
 function syncEndpoint() {
   return state.SYNC.url.replace(/\/$/, '') + '/api/state';
 }
@@ -16,7 +23,7 @@ export async function syncPush(onStatus) {
     const res = await fetch(syncEndpoint(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Access-Pin': state.SYNC.pin },
-      body: JSON.stringify({ data: collectFullState(), updatedBy: state.SYNC.actor || 'Sin nombre' }),
+      body: JSON.stringify({ data: collectFullState(), updatedBy: (state.SESION && state.SESION.nombre) || state.SYNC.actor || 'Sin nombre' }),
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -29,7 +36,7 @@ export async function syncPush(onStatus) {
   } catch (err) {
     state.SYNC.status = 'error';
   }
-  await persistAll();
+  await persistSinMarcar();
   if (onStatus) onStatus();
 }
 
@@ -53,7 +60,7 @@ export async function syncPull(silent, onStatus) {
   } catch (err) {
     state.SYNC.status = 'error';
   }
-  await persistAll();
+  await persistSinMarcar();
   if (onStatus) onStatus();
 }
 
@@ -73,5 +80,5 @@ export async function syncConnect() {
     await syncPush();
   }
   state.SYNC.status = 'ok';
-  await persistAll();
+  await persistSinMarcar();
 }

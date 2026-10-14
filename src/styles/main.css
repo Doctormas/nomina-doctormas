@@ -443,3 +443,25 @@ tbody tr:hover td{background:#fbf8f5;}
 ::-webkit-scrollbar-thumb:hover{background:var(--charcoal-soft)}
 ::-webkit-scrollbar-corner{background:var(--cream-2)}
 @supports not selector(::-webkit-scrollbar){*{scrollbar-color:#a89d92 var(--cream-2)}}
+
+/* ---------- Acceso (login) ---------- */
+.login-overlay{
+  position:fixed;inset:0;z-index:500;background:var(--burgundy);
+  display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;
+}
+.login-card{width:100%;max-width:400px;}
+.login-logo{display:block;height:44px;margin:0 auto 22px;}
+.login-body{background:#fff;border-radius:var(--radius-lg);padding:26px 28px;box-shadow:var(--shadow-lg);}
+.login-body h2{margin:0 0 6px;color:var(--burgundy);font-size:1.25rem;}
+.login-desc{font-size:.82rem;line-height:1.5;color:var(--charcoal-muted);margin:0 0 14px;}
+.login-msg{margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--red-tint);color:var(--red);font-size:.8rem;}
+.login-link{font-size:.78rem;color:var(--burgundy);}
+.login-codigo{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.25rem;font-weight:700;letter-spacing:.06em;text-align:center;padding:14px;background:var(--cream);border-radius:8px;user-select:all;}
+
+/* Usuario con sesión, en el pie de la barra lateral */
+.sidebar-user{display:flex;align-items:center;gap:8px;padding:10px 12px 0 18px;font-size:.72rem;color:rgba(247,243,239,.8);}
+.sidebar-user .su-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sidebar-user button{background:transparent;border:1px solid rgba(255,255,255,.3);color:rgba(247,243,239,.85);border-radius:6px;padding:3px 8px;font-size:.68rem;cursor:pointer;}
+.sidebar-user button:hover{background:rgba(255,255,255,.12);}
+.app-shell.sidebar-collapsed .sidebar-user .su-name{display:none;}
+.app-shell.sidebar-collapsed .sidebar-user{justify-content:center;padding:10px 0 0;}

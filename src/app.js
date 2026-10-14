@@ -7,6 +7,8 @@ import { toast } from './components/toast.js';
 import { exportBackup, importBackup } from './lib/backup.js';
 import { updateTasaHeaderLabel, updateSyncLabel } from './components/statusbar.js';
 import { calcularNotificaciones } from './lib/notificaciones.js';
+import { puedeVer, nombreDeRol } from './lib/auth.js';
+import { pedirAcceso } from './views/login.js';
 
 import { render as renderDashboard } from './views/dashboard.js';
 import { render as renderConfig } from './views/config.js';
@@ -16,6 +18,7 @@ import { render as renderParafiscales } from './views/parafiscales.js';
 import { render as renderVacaciones } from './views/vacaciones.js';
 import { render as renderPrestaciones } from './views/prestaciones.js';
 import { render as renderLiquidacion } from './views/liquidacion.js';
+import { render as renderParalela } from './views/paralela.js';
 
 // La pestaña "Informes" ya no existe como tal: cada informe vive dentro del
 // segmento "Informes" de la pestaña con la que se relaciona. Tampoco existe
@@ -28,7 +31,9 @@ const TABS = [
   { id: 'parafiscales', label: 'Parafiscales', icon: 'parafiscales', view: renderParafiscales },
   { id: 'vacaciones', label: 'Vacaciones', icon: 'vacaciones', view: renderVacaciones },
   { id: 'prestaciones', label: 'Prestaciones sociales', icon: 'prestaciones', view: renderPrestaciones },
-  { id: 'liquidacion', label: 'Liquidación', icon: 'liquidacion', view: renderLiquidacion }
+  { id: 'liquidacion', label: 'Liquidación', icon: 'liquidacion', view: renderLiquidacion },
+  // Sección privada (solo el master por defecto): bonos aparte, sin efecto en la nómina normal.
+  { id: 'paralela', label: 'Nómina paralela', icon: 'candado', view: renderParalela }
 ];
 
 // Configuración vive fuera de la barra de pestañas: se abre desde el ícono
@@ -37,8 +42,44 @@ const CONFIG_ROUTE = { id: 'config', label: 'Configuración', icon: 'config', vi
 
 let ACTIVE_TAB = 'dashboard';
 
+// La sesión puede dejar de ser válida si el master la desactivó o la borró y
+// ese cambio llegó con la sincronización — se vuelve a pedir acceso.
+function sesionVigente() {
+  const s = state.SESION;
+  if (!s) return false;
+  const u = state.USUARIOS.find((x) => x.id === s.id);
+  if (!u || u.activo === false) return false;
+  // El master pudo cambiar su nombre o tipo: se refresca en vivo.
+  state.SESION = { id: u.id, usuario: u.usuario, nombre: u.nombre, rolId: u.rolId };
+  return true;
+}
+
+let PIDIENDO_ACCESO = false;
+async function exigirAcceso() {
+  if (PIDIENDO_ACCESO) return;
+  PIDIENDO_ACCESO = true;
+  state.SESION = null;
+  ACTIVE_TAB = 'dashboard';
+  document.getElementById('sidebarNav').innerHTML = '';
+  document.getElementById('mainArea').innerHTML = '';
+  await pedirAcceso();
+  PIDIENDO_ACCESO = false;
+  render();
+}
+
 export function render() {
+  if (!sesionVigente()) { exigirAcceso(); return; }
+  // Si el tipo de usuario no incluye el módulo, se cae al primero permitido.
+  if (!puedeVer(ACTIVE_TAB)) {
+    const primero = TABS.find((t) => puedeVer(t.id));
+    ACTIVE_TAB = primero ? primero.id : 'sinacceso';
+  }
   renderSidebar();
+  if (ACTIVE_TAB === 'sinacceso') {
+    document.getElementById('topbarTitle').textContent = 'Sin módulos asignados';
+    document.getElementById('mainArea').innerHTML = '<div class="card"><h2>Sin módulos asignados</h2><div class="desc">Su tipo de usuario no tiene módulos habilitados. Pida al usuario master que se los asigne en Configuración → Usuarios.</div></div>';
+    return;
+  }
   const tab = ACTIVE_TAB === 'config' ? CONFIG_ROUTE : TABS.find((t) => t.id === ACTIVE_TAB);
   document.getElementById('topbarTitle').textContent = tab.label;
   const el = document.getElementById('mainArea');
@@ -105,7 +146,7 @@ function wireSidebarToggle() {
 
 function renderSidebar() {
   const nav = document.getElementById('sidebarNav');
-  nav.innerHTML = TABS.map((t) => `
+  nav.innerHTML = TABS.filter((t) => puedeVer(t.id)).map((t) => `
     <button data-tab="${t.id}" class="${ACTIVE_TAB === t.id ? 'active' : ''}">
       ${ICONS[t.icon] || ''}<span>${t.label}</span>
     </button>`).join('');
@@ -115,7 +156,21 @@ function renderSidebar() {
   }));
 
   const btnConfig = document.getElementById('btnConfigGear');
-  if (btnConfig) btnConfig.classList.toggle('active', ACTIVE_TAB === 'config');
+  if (btnConfig) {
+    btnConfig.classList.toggle('active', ACTIVE_TAB === 'config');
+    // Configuración solo para quien tiene ese módulo (el master siempre).
+    btnConfig.style.display = puedeVer('config') ? '' : 'none';
+  }
+
+  const box = document.getElementById('sidebarUser');
+  if (box && state.SESION) {
+    box.style.display = '';
+    box.innerHTML = `<span class="su-name" title="${state.SESION.nombre} · ${nombreDeRol(state.SESION.rolId)}">${state.SESION.nombre}<br><span style="opacity:.65;">${nombreDeRol(state.SESION.rolId)}</span></span><button id="btnCerrarSesion" title="Cerrar sesión">Salir</button>`;
+    box.querySelector('#btnCerrarSesion').addEventListener('click', () => {
+      state.SESION = null;
+      render();
+    });
+  }
 }
 
 /* ---------- Reloj ---------- */
@@ -205,6 +260,12 @@ async function boot() {
   updateTasaHeaderLabel(state.TASA.valor ? 'cache' : 'loading');
   updateSyncLabel();
 
+  // Equipo nuevo en una empresa que ya usa la nube: se traen primero las
+  // cuentas, para no pedir "crear master" si ya existen.
+  if (!state.USUARIOS.length && syncConfigured()) {
+    try { await syncPull(true, updateSyncLabel); } catch (e) { /* sin conexión: se crea localmente */ }
+  }
+
   render();
 
   fetchTasaBCV(false, (status) => {
@@ -216,7 +277,15 @@ async function boot() {
   setInterval(actualizarHistoricoTasaAuto, 6 * 60 * 60 * 1000); // por si la app queda abierta y cruza de día
 
   if (syncConfigured()) {
-    syncPull(true, updateSyncLabel).then(() => render());
+    // Si quedaron cambios locales sin subir a la nube (de la sesión anterior),
+    // NO se trae lo del servidor: pisaría esos cambios. El botón "Guardar"
+    // queda pendiente y usted decide cuándo subirlos.
+    if (state.CAMBIOS_SIN_SINCRONIZAR) {
+      toast('Hay cambios de la sesión anterior sin guardar en la nube. Pulse "Guardar" para subirlos.', 'info', 8000);
+      updateSyncLabel();
+    } else {
+      syncPull(true, updateSyncLabel).then(() => render());
+    }
   }
 }
 

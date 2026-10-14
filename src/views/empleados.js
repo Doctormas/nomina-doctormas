@@ -144,6 +144,8 @@ function wire(root, rerender) {
    ========================================================= */
 let TEMP_HIST = [];
 let TEMP_HIST_IVSS = [];
+let TEMP_HIST_CESTA = [];
+let CESTA_ORIG_LEN = 0;
 let TEMP_DOCUMENTOS = [];
 
 // Tipos de documento sugeridos — se precargan solos (fila en blanco, lista
@@ -284,6 +286,18 @@ function empleadoFormModal(emp, idParaNuevo) {
             <div class="field"><label>Registrada en GlobalTicket (bono de alimentación)</label>
               <select name="tieneTarjetaAlimentacion"><option value="true" ${emp.tieneTarjetaAlimentacion !== false ? 'selected' : ''}>Sí, registrada</option><option value="false" ${emp.tieneTarjetaAlimentacion === false ? 'selected' : ''}>No registrada / pendiente</option></select>
             </div>
+          </div>
+          <h3 style="font-size:1rem;margin-top:16px;">Historial del bono de alimentación (este empleado)</h3>
+          <div class="note" style="margin-top:4px;margin-bottom:8px;">
+            Cada cambio del monto queda aquí con su fecha de vigencia: al generar una nómina de un mes anterior se usa el monto de entonces. El monto de cada nómina sale de la última fila cuya fecha sea igual o anterior a la de la nómina; <b>antes de la primera fila rige el monto de los dos campos de arriba</b>. Ejemplo: campo en $40 y una fila "desde 01/05/2026 = $70" → antes de mayo $40, desde mayo $70. Si cambia el monto arriba y guarda sin tocar esta tabla, se agrega sola una fila con la fecha de hoy. Una fila con el monto vacío significa "usar el general de Configuración".
+          </div>
+          <table style="margin-bottom:8px;"><thead><tr><th>Vigente desde</th><th>Monto mensual</th><th>Moneda</th><th></th></tr></thead>
+          <tbody id="histCestaTbody"></tbody></table>
+          <div class="grid cols-4">
+            <div class="field"><label>Vigente desde</label><input type="date" id="histCestaFecha"></div>
+            <div class="field"><label>Monto mensual</label><input type="number" step="0.01" id="histCestaMonto" placeholder="Ej: 40"></div>
+            <div class="field"><label>Moneda</label><select id="histCestaMoneda"><option value="USD">Dólares (USD)</option><option value="VES">Bolívares (Bs.)</option></select></div>
+            <div class="field" style="align-self:end;"><button type="button" class="btn ghost" id="btnAddHistCesta">+ Agregar al historial</button></div>
           </div>
           <div class="field"><label>Descripción de funciones (para el contrato, además del cargo)</label><textarea name="contratoDescripcionServicio" rows="4" placeholder="Se determina con la mayor precisión posible">${emp.contratoDescripcionServicio || ''}</textarea></div>
 
@@ -506,6 +520,8 @@ function openEmpModal(emp, rerender) {
   const empId = emp ? emp.id : uid();
   TEMP_HIST = emp ? JSON.parse(JSON.stringify(emp.historial || [])) : [];
   TEMP_HIST_IVSS = emp ? JSON.parse(JSON.stringify(emp.historialIVSS || [])) : [];
+  TEMP_HIST_CESTA = emp ? JSON.parse(JSON.stringify(emp.historialCestaticket || [])) : [];
+  CESTA_ORIG_LEN = TEMP_HIST_CESTA.length;
   // Si el empleado aún no tiene ningún documento cargado, se precargan de
   // una vez todos los tipos sugeridos (fila en blanco, lista para
   // adjuntar) — así no hay que darle "+ Agregar documento" uno por uno.
@@ -561,6 +577,27 @@ function openEmpModal(emp, rerender) {
     if (!f || !salarioSemanal) { toast('Ingrese la fecha y el sueldo semanal.', 'error'); return; }
     TEMP_HIST_IVSS.push({ fecha: f, salarioSemanal });
     refreshHistIVSSTable();
+  });
+
+  function refreshHistCestaTable() {
+    const tbody = document.getElementById('histCestaTbody');
+    const orden = TEMP_HIST_CESTA.map((h, i) => ({ h, i })).sort((a, b) => (a.h.fecha < b.h.fecha ? -1 : 1));
+    tbody.innerHTML = orden.map(({ h, i }) => `<tr><td>${h.fecha === '2000-01-01' ? 'Desde el inicio' : fmtDate(h.fecha)}</td>
+      <td>${h.monto === '' || h.monto === null || h.monto === undefined ? '<i>usar el general</i>' : (h.moneda === 'USD' ? '$' : 'Bs. ') + fmtNum(h.monto, 2)}</td>
+      <td>${h.moneda === 'USD' ? 'Dólares' : 'Bolívares'}</td>
+      <td><button type="button" class="btn ghost small" data-del-hist-cesta="${i}">Quitar</button></td></tr>`).join('')
+      || '<tr><td colspan="4" style="color:var(--charcoal-soft);">Sin historial — se usa siempre el monto de los campos de arriba.</td></tr>';
+    tbody.querySelectorAll('[data-del-hist-cesta]').forEach((b) => b.addEventListener('click', () => {
+      TEMP_HIST_CESTA.splice(Number(b.dataset.delHistCesta), 1); refreshHistCestaTable();
+    }));
+  }
+  refreshHistCestaTable();
+  document.getElementById('btnAddHistCesta').addEventListener('click', () => {
+    const f = document.getElementById('histCestaFecha').value;
+    const montoRaw = document.getElementById('histCestaMonto').value;
+    if (!f) { toast('Indique desde qué fecha rige el monto.', 'error'); return; }
+    TEMP_HIST_CESTA.push({ fecha: f, monto: montoRaw === '' ? '' : Number(montoRaw), moneda: document.getElementById('histCestaMoneda').value });
+    refreshHistCestaTable();
   });
 
   const histMonedaSel = document.getElementById('histMoneda');
@@ -795,6 +832,21 @@ function openEmpModal(emp, rerender) {
   document.getElementById('formEmpleado').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    // Si cambió el bono de alimentación de la ficha y no se tocó la tabla de
+    // historial a mano, el cambio se anota solo (con fecha de hoy) — así las
+    // nóminas de meses anteriores siguen usando el monto que regía entonces.
+    if (emp && TEMP_HIST_CESTA.length === CESTA_ORIG_LEN) {
+      const norm = (v) => (v === undefined || v === null ? '' : v);
+      const antes = norm(emp.cestaticket);
+      const antesM = emp.cestaticketMoneda || 'VES';
+      const despuesRaw = fd.get('cestaticket');
+      const despues = despuesRaw !== '' && despuesRaw !== null ? Number(despuesRaw) : '';
+      const despuesM = fd.get('cestaticketMoneda') || 'VES';
+      if (antes !== despues || (despues !== '' && antesM !== despuesM)) {
+        if (!TEMP_HIST_CESTA.length) TEMP_HIST_CESTA.push({ fecha: '2000-01-01', monto: antes, moneda: antesM });
+        TEMP_HIST_CESTA.push({ fecha: todayStr(), monto: despues, moneda: despuesM });
+      }
+    }
     const id = fd.get('id') || uid();
     const nuevo = {
       id, nombre: fd.get('nombre'), cedula: fd.get('cedula'), cargo: fd.get('cargo'),
@@ -815,7 +867,7 @@ function openEmpModal(emp, rerender) {
           rpe: { hecho: fd.get('egresoTramiteRpeHecho') === 'on', fecha: fd.get('egresoTramiteRpeFecha') || '' }
         }
       },
-      historial: TEMP_HIST, historialIVSS: TEMP_HIST_IVSS, documentos: TEMP_DOCUMENTOS,
+      historial: TEMP_HIST, historialIVSS: TEMP_HIST_IVSS, historialCestaticket: TEMP_HIST_CESTA, documentos: TEMP_DOCUMENTOS,
       fechaNacimiento: fd.get('fechaNacimiento') || '', nacionalidad: fd.get('nacionalidad') || '',
       sexo: fd.get('sexo') || '', direccion: fd.get('direccion') || '', telefono: fd.get('telefono') || '',
       correo: fd.get('correo') || '', departamento: fd.get('departamento') || '',

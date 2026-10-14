@@ -1,7 +1,7 @@
 // Generadores de informes para contabilidad — antes vivían todos juntos en la
 // pestaña "Informes"; ahora cada uno vive dentro del segmento "Informes" de la
 // pestaña con la que se relaciona (Nómina, Vacaciones, Utilidades, Prestaciones).
-import { state, tipoNominaCfg, empresaConRif } from '../state/store.js';
+import { state, tipoNominaCfg, empresaConRif, tasaEnFecha } from '../state/store.js';
 import { logoHeaderHTML } from './logo.js';
 import { estadoVacaciones, calcularPrestaciones, antiguedad, salarioVigente, diasUtilidadesEmp, cestaticketEmp, islrPorcentajeEmp, calcularDPPMes, calcularParafiscalesMes, calcularParafiscalesPeriodo } from '../lib/calculos.js';
 import { fmt } from './moneda.js';
@@ -137,6 +137,235 @@ export function construirInformeAportesHTML(desde, hasta) {
 }
 
 /* ---------- DPP (Ley de Protección de las Pensiones) — cálculo mensual ---------- */
+/* ---------- Informe de nómina mensual (detallado) ---------- */
+export function construirInformeNominaMensualHTML(mesISO) {
+  const C = state.CONFIG;
+  const n = (v) => fmt(v).replace(/^Bs\. /, '');
+  const u = state.DISPLAY_CURRENCY === 'USD' ? 'US$' : 'Bs.';
+  const periodos = state.PERIODOS.filter((p) => p.fecha.slice(0, 7) === mesISO);
+  const porEmp = new Map();
+  periodos.forEach((p) => {
+    const r = p.resultado;
+    if (!porEmp.has(p.empId)) {
+      porEmp.set(p.empId, { emp: state.EMPLEADOS.find((e) => e.id === p.empId), dias: 0, salario: 0, bono: 0, devengado: 0, ivss: 0, rpe: 0, faov: 0, islr: 0, ded: 0, neto: 0, patr: 0, ingreso: false, egreso: false, recibos: 0 });
+    }
+    const f = porEmp.get(p.empId);
+    f.dias += r.diasPeriodo || 0; f.salario += r.salarioNormalPeriodo || 0; f.bono += r.cestaticketPeriodo || 0;
+    f.devengado += r.totalDevengado || 0; f.ivss += r.ivssTrab || 0; f.rpe += r.rpeTrab || 0; f.faov += r.faovTrab || 0; f.islr += r.islrTrab || 0;
+    f.ded += r.totalDeducciones || 0; f.neto += r.neto || 0; f.patr += r.aportesPatronales || 0; f.recibos += 1;
+    if (r.periodoParcial) { if (r.periodoParcialPorEgreso) f.egreso = true; else f.ingreso = true; }
+  });
+  const filas = Array.from(porEmp.values()).filter((f) => f.emp).sort((a, b) => a.emp.nombre.localeCompare(b.emp.nombre));
+  const T = filas.reduce((a, f) => { Object.keys(f).forEach((k) => { if (typeof f[k] === 'number') a[k] = (a[k] || 0) + f[k]; }); return a; }, {});
+  const S = (fn) => periodos.reduce((a, p) => a + (fn(p.resultado) || 0), 0);
+  const pat = { ivss: S((r) => r.ivssPatrono), rpe: S((r) => r.rpePatrono), faov: S((r) => r.faovPatrono), inces: S((r) => r.incesPatrono) };
+  const patTotal = pat.ivss + pat.rpe + pat.faov + pat.inces;
+  const dpp = calcularDPPMes(mesISO);
+  const bonoAparte = state.BONO_ALIM_PAGADO.filter((b) => b.fecha.slice(0, 7) === mesISO).reduce((a, b) => a + b.monto, 0);
+  const retenciones = (T.ivss || 0) + (T.rpe || 0) + (T.faov || 0) + (T.islr || 0);
+  const costo = (T.devengado || 0) + patTotal + dpp.totalDPP + bonoAparte;
+
+  const filasHtml = filas.map((f) => `<tr>
+    <td><b>${f.emp.nombre}</b>${f.egreso ? ' <span class="tag err">egresó</span>' : ''}${f.ingreso ? ' <span class="tag warn">ingresó</span>' : ''}<div class="legal">${f.emp.cargo || ''}${f.emp.departamento ? ' · ' + f.emp.departamento : ''}</div></td>
+    <td style="text-align:center;">${Math.min(f.dias, 30)}</td><td>${n(f.salario)}</td><td>${n(f.bono)}</td><td><b>${n(f.devengado)}</b></td>
+    <td>${n(f.ivss)}</td><td>${n(f.rpe)}</td><td>${n(f.faov)}</td><td>${n(f.islr)}</td><td>${n(f.ded)}</td><td><b>${n(f.neto)}</b></td><td>${n(f.patr)}</td>
+  </tr>`).join('');
+
+  const contenidoHtml = `
+    <div class="nommes">
+      <style>.nommes table.dn th,.nommes table.dn td{padding:3px 4px;font-size:8px;}.nommes table.dn th{font-size:6.5px;}.nommes table.dn td:not(:first-child){text-align:right;}.nommes table.dn td:nth-child(2){text-align:center;}</style>
+      ${logoHeaderHTML()}
+      <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Informe de nómina del mes ${mesISO}</h3>
+      <div class="legal">${periodos.length} recibos guardados · ${filas.length} trabajadores · montos en ${u === 'Bs.' ? 'bolívares' : 'dólares'}. Conceptos salariales: sueldo. No salariales: bono de alimentación.</div>
+
+      <table class="dn" style="margin-top:10px;">
+        <thead><tr><th>Trabajador</th><th>Días</th><th>Sueldo (salarial)</th><th>Bono alim. (no salarial)</th><th>Total devengado</th><th>IVSS</th><th>RPE</th><th>FAOV</th><th>ISLR</th><th>Total deducc.</th><th>Neto pagado</th><th>Aportes patronales</th></tr></thead>
+        <tbody>${filasHtml || '<tr class="empty-row"><td colspan="12">No hay nómina guardada en este mes.</td></tr>'}</tbody>
+        <tfoot><tr><td><b>TOTAL</b></td><td></td><td><b>${n(T.salario || 0)}</b></td><td><b>${n(T.bono || 0)}</b></td><td><b>${n(T.devengado || 0)}</b></td><td><b>${n(T.ivss || 0)}</b></td><td><b>${n(T.rpe || 0)}</b></td><td><b>${n(T.faov || 0)}</b></td><td><b>${n(T.islr || 0)}</b></td><td><b>${n(T.ded || 0)}</b></td><td><b>${n(T.neto || 0)}</b></td><td><b>${n(T.patr || 0)}</b></td></tr></tfoot>
+      </table>
+
+      ${totalesPorConceptoMesHTML(mesISO, n, u)}
+
+      <div style="display:flex;gap:14px;align-items:flex-start;margin-top:14px;">
+        <table style="flex:1;"><thead><tr><th colspan="2">Aportes patronales del mes (por ente)</th></tr></thead><tbody>
+          <tr><td>IVSS (${C.ivssPatrono}%)</td><td style="text-align:right;">${n(pat.ivss)}</td></tr>
+          <tr><td>RPE (${C.rpePatrono}%)</td><td style="text-align:right;">${n(pat.rpe)}</td></tr>
+          <tr><td>FAOV (${C.faovPatrono}%)</td><td style="text-align:right;">${n(pat.faov)}</td></tr>
+          <tr><td>INCES (${C.incesPatrono}%)</td><td style="text-align:right;">${n(pat.inces)}</td></tr>
+          <tr><td><b>Total aportes patronales</b></td><td style="text-align:right;"><b>${n(patTotal)}</b></td></tr>
+        </tbody></table>
+        <table style="flex:1;"><thead><tr><th colspan="2">Costo de la nómina para la empresa</th></tr></thead><tbody>
+          <tr><td>Total devengado (sueldos + bono)</td><td style="text-align:right;">${n(T.devengado || 0)}</td></tr>
+          ${bonoAparte > 0 ? `<tr><td>Bono de alimentación pagado aparte</td><td style="text-align:right;">${n(bonoAparte)}</td></tr>` : ''}
+          <tr><td>Aportes patronales</td><td style="text-align:right;">${n(patTotal)}</td></tr>
+          <tr><td>DPP del mes (${C.dppPatrono}%)</td><td style="text-align:right;">${n(dpp.totalDPP)}</td></tr>
+          <tr><td><b>Costo total del mes</b></td><td style="text-align:right;"><b>${n(costo)}</b></td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="note" style="margin-top:12px;">De lo devengado, ${n(T.neto || 0)} se paga a los trabajadores y ${n(retenciones)} se retiene para enterar (IVSS, RPE, FAOV e ISLR). Los aportes patronales y la DPP se suman a lo devengado como costo de la empresa. El detalle por tributo y su periodicidad de declaración está en la pestaña Parafiscales.</div>
+    </div>`;
+  const d = (v) => (v || 0).toFixed(2);
+  const csvHeaders = ['Trabajador', 'Cargo', 'Días', 'Sueldo salarial', 'Bono alimentación', 'Total devengado', 'IVSS', 'RPE', 'FAOV', 'ISLR', 'Total deducciones', 'Neto pagado', 'Aportes patronales'];
+  const csvRows = filas.map((f) => [f.emp.nombre, f.emp.cargo || '', Math.min(f.dias, 30), d(f.salario), d(f.bono), d(f.devengado), d(f.ivss), d(f.rpe), d(f.faov), d(f.islr), d(f.ded), d(f.neto), d(f.patr)])
+    .concat([['TOTAL', '', '', d(T.salario), d(T.bono), d(T.devengado), d(T.ivss), d(T.rpe), d(T.faov), d(T.islr), d(T.ded), d(T.neto), d(T.patr)]]);
+  return { contenidoHtml, csvHeaders, csvRows };
+}
+
+/* ---------- Pagos mes a mes en dólares (salarial / no salarial) ---------- */
+// Todo lo que se pagó en cada mes del año, convertido a USD con la tasa BCV de
+// la fecha en que se pagó cada cosa (que es la misma con que se calculó).
+// incluirParalela suma los bonos de la nómina paralela (solo si el usuario
+// tiene acceso a esa sección — el llamador decide).
+export function construirInformePagosMensualesUSD(ano, incluirParalela) {
+  const MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const doce = () => new Array(12).fill(0);
+  let sinTasa = 0;
+  const aUSD = (bsMonto, fecha) => {
+    const t = tasaEnFecha(fecha);
+    if (!t) { if (bsMonto) sinTasa += 1; return 0; }
+    return bsMonto / t;
+  };
+  const mesIdx = (fecha) => Number(fecha.slice(5, 7)) - 1;
+  const delAno = (fecha) => fecha && fecha.slice(0, 4) === String(ano);
+
+  const filas = {
+    sueldo: doce(), bonoAlim: doce(), bonoVac: doce(), utilidades: doce(), liquidaciones: doce(), paralela: doce(),
+    ivss: doce(), rpe: doce(), faov: doce(), islr: doce(), incesUtil: doce(), patronal: doce()
+  };
+  const porTrabajador = new Map(); // clave -> { nombre, cargo, externo, meses[12] }
+  const sumaTrab = (clave, nombre, cargo, externo, i, v) => {
+    if (!porTrabajador.has(clave)) porTrabajador.set(clave, { nombre, cargo, externo, meses: doce() });
+    porTrabajador.get(clave).meses[i] += v;
+  };
+  const datosEmp = (empId) => {
+    const e = state.EMPLEADOS.find((x) => x.id === empId);
+    return { nombre: e ? e.nombre : '(trabajador eliminado)', cargo: e ? (e.cargo || '') : '' };
+  };
+
+  state.PERIODOS.filter((p) => delAno(p.fecha)).forEach((p) => {
+    const i = mesIdx(p.fecha); const r = p.resultado; const f = p.fecha;
+    const sueldo = aUSD(r.salarioNormalPeriodo, f); const bono = aUSD(r.cestaticketPeriodo, f);
+    filas.sueldo[i] += sueldo; filas.bonoAlim[i] += bono;
+    filas.ivss[i] += aUSD(r.ivssTrab, f); filas.rpe[i] += aUSD(r.rpeTrab, f);
+    filas.faov[i] += aUSD(r.faovTrab, f); filas.islr[i] += aUSD(r.islrTrab, f);
+    filas.patronal[i] += aUSD(r.aportesPatronales, f);
+    const d = datosEmp(p.empId);
+    sumaTrab(p.empId, d.nombre, d.cargo, false, i, sueldo + bono);
+  });
+  state.BONO_ALIM_PAGADO.filter((b) => delAno(b.fecha)).forEach((b) => {
+    const v = aUSD(b.monto, b.fecha); filas.bonoAlim[mesIdx(b.fecha)] += v;
+    const d = datosEmp(b.empId); sumaTrab(b.empId, d.nombre, d.cargo, false, mesIdx(b.fecha), v);
+  });
+  state.BONO_VAC_PAGADO.filter((b) => delAno(b.fecha)).forEach((b) => {
+    const v = aUSD(b.monto, b.fecha); filas.bonoVac[mesIdx(b.fecha)] += v;
+    const d = datosEmp(b.empId); sumaTrab(b.empId, d.nombre, d.cargo, false, mesIdx(b.fecha), v);
+  });
+  state.UTILIDADES_PAGADAS.filter((u) => delAno(u.fecha)).forEach((u) => {
+    const i = mesIdx(u.fecha);
+    const v = aUSD(u.resultado.montoBruto, u.fecha);
+    filas.utilidades[i] += v; filas.incesUtil[i] += aUSD(u.resultado.incesTrabajador, u.fecha);
+    const d = datosEmp(u.empId); sumaTrab(u.empId, d.nombre, d.cargo, false, i, v);
+  });
+  state.LIQUIDACIONES.filter((l) => delAno(l.fecha)).forEach((l) => {
+    const v = aUSD(l.resultado.totalGeneral, l.fecha); filas.liquidaciones[mesIdx(l.fecha)] += v;
+    const d = datosEmp(l.empId); sumaTrab(l.empId, d.nombre, d.cargo, false, mesIdx(l.fecha), v);
+  });
+  if (incluirParalela && state.PARALELA && Array.isArray(state.PARALELA.pagos)) {
+    state.PARALELA.pagos.filter((p) => delAno(p.fecha)).forEach((p) => {
+      const i = mesIdx(p.fecha);
+      p.items.forEach((it) => {
+        const v = (it.moneda || p.moneda) === 'USD' ? it.monto : aUSD(it.montoBs, p.fecha);
+        filas.paralela[i] += v;
+        const per = (state.PARALELA.personas || []).find((x) => x.id === it.empId);
+        const emp = state.EMPLEADOS.find((x) => x.id === it.empId);
+        const snap = (p.nombres && p.nombres[it.empId]) || {};
+        const nombre = (emp && emp.nombre) || (per && per.nombre) || snap.nombre || '—';
+        const cargo = (emp && emp.cargo) || (per && per.cargo) || snap.cargo || '';
+        sumaTrab(it.empId, nombre, cargo, !emp, i, v);
+      });
+    });
+  }
+
+  const suma = (a) => a.reduce((x, y) => x + y, 0);
+  const sumar = (...arrs) => doce().map((_, i) => arrs.reduce((a, arr) => a + arr[i], 0));
+  const salarial = filas.sueldo;
+  const noSalarial = sumar(filas.bonoAlim, filas.bonoVac, filas.utilidades, filas.liquidaciones);
+  const totalPagado = sumar(salarial, noSalarial, filas.paralela);
+  const retenciones = sumar(filas.ivss, filas.rpe, filas.faov, filas.islr, filas.incesUtil);
+  const neto = totalPagado.map((v, i) => v - retenciones[i]);
+
+  const usd = (v) => (v ? '$' + fmtNum(v, 2) : '—');
+  const filaHtml = (etiqueta, arr, fuerte, sub) => `<tr${fuerte ? ' style="background:#F7F3EF;"' : ''}>
+    <td style="${sub ? 'padding-left:14px;' : ''}">${fuerte ? `<b>${etiqueta}</b>` : etiqueta}</td>
+    ${arr.map((v) => `<td>${fuerte ? `<b>${usd(v)}</b>` : usd(v)}</td>`).join('')}
+    <td><b>${usd(suma(arr))}</b></td></tr>`;
+  const cabecera = `<tr><th>Concepto (US$)</th>${MES.map((m) => `<th>${m}</th>`).join('')}<th>Total ${ano}</th></tr>`;
+  const seccion = (t) => `<tr><td colspan="14" style="background:#EAE3DB;"><b>${t}</b></td></tr>`;
+
+  const trabajadores = Array.from(porTrabajador.values())
+    .sort((a, b) => (a.externo - b.externo) || a.nombre.localeCompare(b.nombre));
+  const trabHtml = trabajadores.map((t) => `<tr>
+    <td>${t.nombre}${t.externo ? ' <span class="tag warn">paralela</span>' : ''}<div class="legal">${t.cargo}</div></td>
+    ${t.meses.map((v) => `<td>${usd(v)}</td>`).join('')}<td><b>${usd(suma(t.meses))}</b></td></tr>`).join('');
+
+  const contenidoHtml = `
+    <div class="nommes">
+      <style>.nommes table.dn th,.nommes table.dn td{padding:3px 3px;font-size:7.5px;}.nommes table.dn th{font-size:6.5px;}.nommes table.dn td:not(:first-child),.nommes table.dn th:not(:first-child){text-align:right;}</style>
+      ${logoHeaderHTML()}
+      <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Pagos de ${ano}, mes a mes, en dólares</h3>
+      <div class="legal">Cada pago está convertido a US$ con la tasa BCV de su fecha de pago. Salarial: sueldo. No salarial: bono de alimentación, bono vacacional, utilidades y liquidaciones${incluirParalela ? '; además, los bonos de la nómina paralela' : ''}.${sinTasa ? ` <b>Atención:</b> ${sinTasa} pago(s) sin tasa BCV de su fecha no pudieron convertirse.` : ''}</div>
+
+      <table class="dn" style="margin-top:10px;">
+        <thead>${cabecera}</thead>
+        <tbody>
+          ${seccion('Conceptos salariales')}
+          ${filaHtml('Sueldo', filas.sueldo, false, true)}
+          ${filaHtml('Total salarial', salarial, true)}
+          ${seccion('Conceptos no salariales')}
+          ${filaHtml('Bono de alimentación', filas.bonoAlim, false, true)}
+          ${filaHtml('Bono vacacional', filas.bonoVac, false, true)}
+          ${filaHtml('Utilidades', filas.utilidades, false, true)}
+          ${filaHtml('Liquidaciones (prestaciones, vacaciones, etc.)', filas.liquidaciones, false, true)}
+          ${filaHtml('Total no salarial', noSalarial, true)}
+          ${incluirParalela ? seccion('Nómina paralela') + filaHtml('Bonos nómina paralela', filas.paralela, true) : ''}
+          ${filaHtml('TOTAL PAGADO (bruto)', totalPagado, true)}
+          ${seccion('Retenciones al trabajador (incluidas arriba)')}
+          ${filaHtml('IVSS', filas.ivss, false, true)}
+          ${filaHtml('RPE', filas.rpe, false, true)}
+          ${filaHtml('FAOV', filas.faov, false, true)}
+          ${filaHtml('ISLR', filas.islr, false, true)}
+          ${filaHtml('INCES sobre utilidades', filas.incesUtil, false, true)}
+          ${filaHtml('Total retenciones', retenciones, true)}
+          ${filaHtml('NETO PAGADO A LOS TRABAJADORES', neto, true)}
+          ${seccion('Costo adicional de la empresa (no incluido arriba)')}
+          ${filaHtml('Aportes patronales (IVSS, RPE, FAOV, INCES)', filas.patronal, false, true)}
+        </tbody>
+      </table>
+
+      <h3 style="font-size:.95rem;margin:16px 0 4px;">Total pagado por trabajador (bruto, US$)</h3>
+      <table class="dn">
+        <thead><tr><th>Trabajador</th>${MES.map((m) => `<th>${m}</th>`).join('')}<th>Total ${ano}</th></tr></thead>
+        <tbody>${trabHtml || '<tr class="empty-row"><td colspan="14">No hay pagos registrados en este año.</td></tr>'}</tbody>
+        <tfoot><tr><td><b>TOTAL</b></td>${totalPagado.map((v) => `<td><b>${usd(v)}</b></td>`).join('')}<td><b>${usd(suma(totalPagado))}</b></td></tr></tfoot>
+      </table>
+    </div>`;
+
+  const d = (v) => v.toFixed(2);
+  const csvHeaders = ['Concepto', ...MES, `Total ${ano}`];
+  const lin = (nom, arr) => [nom, ...arr.map(d), d(suma(arr))];
+  const csvRows = [
+    lin('Sueldo (salarial)', filas.sueldo), lin('Bono de alimentación', filas.bonoAlim), lin('Bono vacacional', filas.bonoVac),
+    lin('Utilidades', filas.utilidades), lin('Liquidaciones', filas.liquidaciones),
+    ...(incluirParalela ? [lin('Bonos nómina paralela', filas.paralela)] : []),
+    lin('TOTAL PAGADO (bruto)', totalPagado), lin('IVSS', filas.ivss), lin('RPE', filas.rpe), lin('FAOV', filas.faov), lin('ISLR', filas.islr),
+    lin('INCES utilidades', filas.incesUtil), lin('NETO PAGADO', neto), lin('Aportes patronales', filas.patronal),
+    ['', ...MES.map(() => ''), ''],
+    ...trabajadores.map((t) => lin(t.nombre + (t.externo ? ' (paralela)' : ''), t.meses))
+  ];
+  return { contenidoHtml, csvHeaders, csvRows };
+}
+
 /* ---------- Parafiscales del mes (sobre lo devengado salarial) ---------- */
 // Totales por concepto del mes: una columna por cada corrida de nómina
 // guardada ese mes (ej. 1ra y 2da quincena) y la columna TOTAL DEL MES.

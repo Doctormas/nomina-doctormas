@@ -414,7 +414,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const neto = totalDevengado - totalDeducciones;
 
   const tasaBCV = tasaEnFecha(fechaPeriodoISO);
-  const usaTasaUSD = emp.monedaSalario === 'USD' || (cfg.incluyeCestaticket && !bonoAlimPagadoAparte && cestaticketMonedaEmp(emp) === 'USD');
+  const usaTasaUSD = emp.monedaSalario === 'USD' || (cfg.incluyeCestaticket && !bonoAlimPagadoAparte && cestaticketMonedaEmp(emp, fechaPeriodoISO) === 'USD');
   const { desde: periodoDesde, hasta: periodoHasta } = periodoNominal(tipoKey, fechaPeriodoISO);
 
   return {
@@ -693,22 +693,58 @@ export function diasUtilidadesEmp(emp) {
     ? Number(emp.diasUtilidadesAnual) : state.CONFIG.diasUtilidadesAnual;
 }
 
+// Historial del bono de alimentación: [{ fecha, monto, moneda }]. El monto que
+// rige para una fecha es el de la última entrada con fecha <= esa fecha (así,
+// al generar una nómina de un mes anterior sale el bono que se pagaba entonces,
+// no el actual). Si todas las entradas son posteriores a la fecha, rige la más
+// antigua — salvo que se pida estricto (ficha del empleado): ahí no hay entrada
+// y rige el monto que tiene cargado la ficha en sus campos (el "de antes").
+function entradaCestaVigente(hist, fechaISO, estricto) {
+  if (!hist || !hist.length) return null;
+  const orden = hist.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  let e = null;
+  for (const h of orden) { if (h.fecha <= fechaISO) e = h; else break; }
+  return e || (estricto ? null : orden[0]);
+}
+
+const montoCestaDefinido = (m) => m !== undefined && m !== null && m !== '';
+
+// Bono general (Configuración) vigente a la fecha, en su moneda nativa.
+export function cestaticketGeneralVigente(fechaISO) {
+  fechaISO = fechaISO || todayStr();
+  const e = entradaCestaVigente(state.CONFIG.historialCestaticket, fechaISO);
+  if (e) return { monto: Number(e.monto || 0), moneda: e.moneda || 'VES' };
+  return { monto: Number(state.CONFIG.cestaticket || 0), moneda: state.CONFIG.cestaticketMoneda || 'VES' };
+}
+
+// Bono de este empleado vigente a la fecha, en su moneda nativa: su historial
+// propio; si no tiene (o la entrada está en blanco), el campo propio de la
+// ficha; y si tampoco, el general de Configuración (también con historial).
+export function cestaticketVigenteEmp(emp, fechaISO) {
+  fechaISO = fechaISO || todayStr();
+  const e = entradaCestaVigente(emp.historialCestaticket, fechaISO, true);
+  if (e) {
+    if (montoCestaDefinido(e.monto)) return { monto: Number(e.monto), moneda: e.moneda || 'VES' };
+    return cestaticketGeneralVigente(fechaISO);
+  }
+  if (montoCestaDefinido(emp.cestaticket)) return { monto: Number(emp.cestaticket), moneda: emp.cestaticketMoneda || 'VES' };
+  return cestaticketGeneralVigente(fechaISO);
+}
+
+const cestaABs = (v, fechaISO) => (v.moneda === 'USD' ? v.monto * tasaEnFecha(fechaISO) : v.monto);
+
 export function cestaticketGeneralBs(fechaISO) {
   fechaISO = fechaISO || todayStr();
-  return state.CONFIG.cestaticketMoneda === 'USD' ? Number(state.CONFIG.cestaticket || 0) * tasaEnFecha(fechaISO) : Number(state.CONFIG.cestaticket || 0);
+  return cestaABs(cestaticketGeneralVigente(fechaISO), fechaISO);
 }
 
 export function cestaticketEmp(emp, fechaISO) {
   fechaISO = fechaISO || todayStr();
-  const tienePropio = emp.cestaticket !== undefined && emp.cestaticket !== null && emp.cestaticket !== '';
-  if (!tienePropio) return cestaticketGeneralBs(fechaISO);
-  const moneda = emp.cestaticketMoneda || 'VES';
-  return moneda === 'USD' ? Number(emp.cestaticket) * tasaEnFecha(fechaISO) : Number(emp.cestaticket);
+  return cestaABs(cestaticketVigenteEmp(emp, fechaISO), fechaISO);
 }
 
-export function cestaticketMonedaEmp(emp) {
-  const tienePropio = emp.cestaticket !== undefined && emp.cestaticket !== null && emp.cestaticket !== '';
-  return tienePropio ? (emp.cestaticketMoneda || 'VES') : (state.CONFIG.cestaticketMoneda || 'VES');
+export function cestaticketMonedaEmp(emp, fechaISO) {
+  return cestaticketVigenteEmp(emp, fechaISO).moneda;
 }
 
 export function calcularUtilidades(emp, anoCalculo, fechaCorteISO) {

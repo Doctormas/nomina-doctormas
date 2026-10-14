@@ -1,14 +1,17 @@
 import { state, persistAll, registrarTasaHistorica, syncConfigured, restaurarRespaldoAuto, MAX_RESPALDOS_AUTO } from '../state/store.js';
 import { fetchTasaBCV, fetchTasaPorFecha, importarHistoricoCompleto } from '../lib/tasa.js';
 import { syncConnect, syncPull, syncPush } from '../lib/sync.js';
-import { fmtNum, fmtDate, todayStr } from '../lib/formato.js';
+import { fmtNum, fmtDate, todayStr, uid } from '../lib/formato.js';
 import { downloadCSV } from '../lib/csv.js';
 import { tablaToCSV } from '../lib/formato.js';
 import { toast } from '../components/toast.js';
 import { confirmDialog } from '../components/confirm.js';
 import { updateTasaHeaderLabel, updateSyncLabel } from '../components/statusbar.js';
+import { esMaster } from '../lib/auth.js';
+import { usuariosHTML, wireUsuarios } from './usuarios.js';
 
-const MODULOS = [
+const MODULOS_TODOS = [
+  { id: 'usuarios', label: 'Usuarios', soloMaster: true },
   { id: 'tasas', label: 'Tasas' },
   { id: 'nube', label: 'Nube' },
   { id: 'parametros', label: 'Parámetros' },
@@ -16,10 +19,13 @@ const MODULOS = [
   { id: 'historial', label: 'Historial' },
   { id: 'actualizaciones', label: 'Actualizaciones' }
 ];
+// Usuarios y tipos solo los administra el master.
+const modulosVisibles = () => MODULOS_TODOS.filter((m) => !m.soloMaster || esMaster());
 let MODULO_ACTIVO = 'tasas';
 
 export function render(root, rerender) {
-  const pillsHtml = MODULOS.map((m) => `<button data-modulo="${m.id}" class="${MODULO_ACTIVO === m.id ? 'active' : ''}">${m.label}</button>`).join('');
+  if (MODULO_ACTIVO === 'usuarios' && !esMaster()) MODULO_ACTIVO = 'tasas';
+  const pillsHtml = modulosVisibles().map((m) => `<button data-modulo="${m.id}" class="${MODULO_ACTIVO === m.id ? 'active' : ''}">${m.label}</button>`).join('');
 
   root.innerHTML = `
   <div class="pill-toggle" id="configPillToggle" style="margin-bottom:18px;">${pillsHtml}</div>
@@ -33,9 +39,11 @@ export function render(root, rerender) {
   });
 
   wire(root, rerender);
+  if (MODULO_ACTIVO === 'usuarios') wireUsuarios(root, () => render(root, rerender));
 }
 
 function moduloHTML(modulo) {
+  if (modulo === 'usuarios') return esMaster() ? usuariosHTML() : '';
   if (modulo === 'tasas') return tasasHTML();
   if (modulo === 'nube') return nubeHTML();
   if (modulo === 'parametros') return parametrosHTML();
@@ -221,6 +229,35 @@ function parametrosHTML() {
       </div>
       <div style="margin-top:16px;"><button class="btn" type="submit">Guardar parámetros</button></div>
     </form>
+  </div>
+  ${cestaHistorialHTML()}`;
+}
+
+// Historial del bono de alimentación general: cada cambio queda con su fecha
+// de vigencia, para que una nómina de un mes anterior use el monto de entonces.
+function cestaHistorialHTML() {
+  const c = state.CONFIG;
+  const hist = (c.historialCestaticket || []).slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  const filas = hist.map((h) => `<tr>
+    <td>${h.fecha === '2000-01-01' ? 'Desde el inicio' : fmtDate(h.fecha)}</td>
+    <td>${h.moneda === 'USD' ? '$' : 'Bs. '}${fmtNum(h.monto, 2)}</td>
+    <td>${h.moneda === 'USD' ? 'Dólares' : 'Bolívares'}</td>
+    <td><button type="button" class="btn ghost small danger" data-cesta-del="${h.id}">Quitar</button></td>
+  </tr>`).join('');
+  return `
+  <div class="card">
+    <h2>Historial del bono de alimentación general</h2>
+    <div class="desc">Cada vez que cambie el monto general arriba, el cambio queda aquí con su fecha. Al generar una nómina de un mes anterior, el sistema usa el monto que regía en esa fecha — no el actual. Los trabajadores con monto propio tienen su historial en su ficha.<br>Si ya cambió el monto antes de que existiera este historial, agregue una fila con el monto anterior ("Vigente desde" = 01/01/2000 o la fecha en que empezó) y otra con el nuevo desde su fecha de cambio.</div>
+    <table>
+      <thead><tr><th>Vigente desde</th><th>Monto mensual</th><th>Moneda</th><th></th></tr></thead>
+      <tbody>${filas || `<tr><td colspan="4" style="color:var(--charcoal-soft);">Sin historial — se usa siempre el monto general actual (${c.cestaticketMoneda === 'USD' ? '$' : 'Bs. '}${fmtNum(c.cestaticket, 2)}).</td></tr>`}</tbody>
+    </table>
+    <div class="grid cols-4" style="margin-top:12px;">
+      <div class="field"><label>Vigente desde</label><input type="date" id="cestaFecha"></div>
+      <div class="field"><label>Monto mensual</label><input type="number" step="0.01" id="cestaMonto" placeholder="Ej: 40"></div>
+      <div class="field"><label>Moneda</label><select id="cestaMoneda"><option value="USD">Dólares (USD)</option><option value="VES">Bolívares (Bs.)</option></select></div>
+      <div class="field" style="align-self:end;"><button type="button" class="btn secondary" id="btnCestaAdd">+ Agregar al historial</button></div>
+    </div>
   </div>`;
 }
 
@@ -441,15 +478,50 @@ function wire(root, rerender) {
     formConfig.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(formConfig);
+      // Si cambió el bono general, el cambio se anota en el historial (con la
+      // fecha de hoy) para no alterar las nóminas de meses anteriores.
+      const cestaAntes = Number(state.CONFIG.cestaticket || 0);
+      const cestaMonedaAntes = state.CONFIG.cestaticketMoneda || 'VES';
       for (const [k, v] of fd.entries()) {
         if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula' || k === 'repLegalCargo') state.CONFIG[k] = v;
         else state.CONFIG[k] = Number(v);
+      }
+      const cestaDespues = Number(state.CONFIG.cestaticket || 0);
+      const cestaMonedaDespues = state.CONFIG.cestaticketMoneda || 'VES';
+      if (cestaDespues !== cestaAntes || cestaMonedaDespues !== cestaMonedaAntes) {
+        const h = state.CONFIG.historialCestaticket || (state.CONFIG.historialCestaticket = []);
+        if (!h.length) h.push({ id: uid(), fecha: '2000-01-01', monto: cestaAntes, moneda: cestaMonedaAntes });
+        h.push({ id: uid(), fecha: todayStr(), monto: cestaDespues, moneda: cestaMonedaDespues });
       }
       await persistAll('Parámetros de configuración modificados');
       toast('Parámetros guardados.', 'success');
       rerender();
     });
   }
+
+  /* Historial del bono de alimentación general */
+  const btnCestaAdd = root.querySelector('#btnCestaAdd');
+  if (btnCestaAdd) btnCestaAdd.addEventListener('click', async () => {
+    const fecha = root.querySelector('#cestaFecha').value;
+    const monto = Number(root.querySelector('#cestaMonto').value);
+    const moneda = root.querySelector('#cestaMoneda').value;
+    if (!fecha || !(monto >= 0) || root.querySelector('#cestaMonto').value === '') { toast('Indique la fecha y el monto.', 'error'); return; }
+    if (!state.CONFIG.historialCestaticket) state.CONFIG.historialCestaticket = [];
+    state.CONFIG.historialCestaticket.push({ id: uid(), fecha, monto, moneda });
+    // El campo "general" actual queda con el monto de la entrada más reciente.
+    const ult = state.CONFIG.historialCestaticket.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).pop();
+    state.CONFIG.cestaticket = ult.monto; state.CONFIG.cestaticketMoneda = ult.moneda;
+    await persistAll('Historial del bono de alimentación general: se agregó una fila');
+    toast('Agregado al historial.', 'success');
+    rerender();
+  });
+  root.querySelectorAll('[data-cesta-del]').forEach((b) => b.addEventListener('click', async () => {
+    state.CONFIG.historialCestaticket = (state.CONFIG.historialCestaticket || []).filter((h) => h.id !== b.dataset.cestaDel);
+    const ult = state.CONFIG.historialCestaticket.slice().sort((a, b2) => (a.fecha < b2.fecha ? -1 : 1)).pop();
+    if (ult) { state.CONFIG.cestaticket = ult.monto; state.CONFIG.cestaticketMoneda = ult.moneda; }
+    await persistAll('Historial del bono de alimentación general: se quitó una fila');
+    rerender();
+  }));
 
   const formTiposNomina = root.querySelector('#formTiposNomina');
   if (formTiposNomina) {

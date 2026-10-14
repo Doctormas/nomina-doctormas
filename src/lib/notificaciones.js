@@ -3,7 +3,7 @@
 // queda desactualizado ni hay que migrar datos viejos.
 import { state } from '../state/store.js';
 import { estadoDe } from '../views/empleados.js';
-import { periodoNominal } from './calculos.js';
+import { periodoNominal, cestaticketVigenteEmp } from './calculos.js';
 import { todayStr, parseDate, fmtDate } from './formato.js';
 
 function esBancamiga(banco) {
@@ -55,7 +55,7 @@ export function calcularNotificaciones() {
       });
     }
 
-    const recibeCestaticket = e.cestaticket !== undefined && e.cestaticket !== null && e.cestaticket !== '' ? Number(e.cestaticket) > 0 : Number(state.CONFIG.cestaticket || 0) > 0;
+    const recibeCestaticket = cestaticketVigenteEmp(e).monto > 0;
     if (estado === 'activo' && recibeCestaticket && e.tieneTarjetaAlimentacion === false) {
       notifs.push({
         id: `cesta-${e.id}`, tipo: 'cestaticket', severidad: 'media',

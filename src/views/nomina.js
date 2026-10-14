@@ -2,7 +2,7 @@ import { state, persistAll, tipoNominaCfg, tomarNumeroRecibo } from '../state/st
 import { generarCorridaNomina, TIPOS_NOMINA_ESPECIALES, departamentosEmpleados } from '../lib/calculos.js';
 import { construirResumenCorridaHTML, construirRecibosCorridaHTML } from '../lib/plantillasPdf.js';
 import { bonoAlimentacionBancoCSV, nominaBancoCSV } from '../lib/bancoCsv.js';
-import { construirInformeNominaHTML, construirInformeUtilidadesHTML, informeConAcciones } from '../lib/informes.js';
+import { construirInformeNominaHTML, construirInformeNominaMensualHTML, construirInformeUtilidadesHTML, informeConAcciones } from '../lib/informes.js';
 import { fmt } from '../lib/moneda.js';
 import { fmtDate, todayStr, uid } from '../lib/formato.js';
 import { resultadoConAcciones } from '../components/resultado.js';
@@ -14,6 +14,7 @@ const MODULOS = [
   { id: 'informes', label: 'Informes' }
 ];
 let MODULO_ACTIVO = 'corridas';
+let HIST_ANO = ''; // filtro del historial de corridas ('' = todos los años)
 
 // Utilidades y bono vacacional son, para efectos de una corrida, otro tipo de
 // nómina más — se guardan agrupadas por fecha igual que quincenas/mensual,
@@ -120,7 +121,9 @@ function corridasHTML() {
     ...TIPOS_NOMINA_ESPECIALES.map((t) => `<option value="${t.id}">${t.label}</option>`)
   ].join('');
   const deptOptions = ['<option value="">Todos los departamentos</option>', ...departamentosEmpleados().map((d) => `<option value="${d}">${d}</option>`)].join('');
-  const corridas = corridasGuardadas().slice(0, 30);
+  const todasCorridas = corridasGuardadas();
+  const anosCorridas = Array.from(new Set(todasCorridas.map((c) => c.fecha.slice(0, 4)))).sort().reverse();
+  const corridas = HIST_ANO ? todasCorridas.filter((c) => c.fecha.slice(0, 4) === HIST_ANO) : todasCorridas;
   const historicos = corridas.map((c) => {
     const totalNeto = c.filas.reduce((a, f) => a + totalNetoDe(c.kind, f.r), 0);
     const key = `${c.kind}|${c.tipoPeriodo}|${c.fecha}`;
@@ -158,6 +161,9 @@ function corridasHTML() {
   <div class="card">
     <h2>Historial de corridas</h2>
     <div class="desc">Nómina, utilidades y bono vacacional guardados, agrupados por fecha. Descargue un solo PDF con el resumen o los recibos individuales de cada corrida.</div>
+    <div class="field" style="max-width:260px;margin-bottom:12px;"><label>Año (${corridas.length} de ${todasCorridas.length} corridas)</label>
+      <select id="histAno"><option value="">Todos los años</option>${anosCorridas.map((a) => `<option value="${a}" ${a === HIST_ANO ? 'selected' : ''}>${a}</option>`).join('')}</select>
+    </div>
     <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Fecha</th><th>Empleados</th><th>Total neto</th><th></th></tr></thead>
     <tbody>${historicos || '<tr class="empty-row"><td colspan="5">Sin corridas guardadas aún.</td></tr>'}</tbody></table></div>
   </div>`;
@@ -167,6 +173,15 @@ function informesHTML() {
   const anoActual = new Date().getFullYear();
   const tipoOptions = '<option value="todos">Todos</option>' + Object.entries(state.CONFIG.tiposNomina).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
   return `
+  <div class="card">
+    <h2>Informe de nómina mensual</h2>
+    <div class="desc">Todas las nóminas guardadas de un mes, por trabajador: sueldo (salarial), bono de alimentación (no salarial), total devengado, cada retención por separado, neto pagado y aportes patronales; con los totales por concepto de cada quincena, los aportes patronales por ente y el costo total del mes para la empresa.</div>
+    <div class="grid cols-3">
+      <div class="field"><label>Mes</label><input type="month" id="nomInfMes" value="${todayStr().slice(0, 7)}"></div>
+      <div class="field" style="align-self:end;"><button class="btn" id="btnGenerarInfNominaMes">Generar informe</button></div>
+    </div>
+    <div id="nomInfMesResultado"></div>
+  </div>
   <div class="card">
     <h2>Resumen de nómina</h2>
     <div class="desc">Todos los recibos guardados en el rango de fechas elegido, con sus totales.</div>
@@ -191,6 +206,9 @@ function informesHTML() {
 }
 
 function wire(root, rerender) {
+  const selHistAno = root.querySelector('#histAno');
+  if (selHistAno) selHistAno.addEventListener('change', () => { HIST_ANO = selHistAno.value; rerender(); });
+
   const btnGenerarCorrida = root.querySelector('#btnGenerarCorrida');
   if (btnGenerarCorrida) btnGenerarCorrida.addEventListener('click', () => {
     const tipo = root.querySelector('#corridaTipo').value;
@@ -357,6 +375,16 @@ function wire(root, rerender) {
       await persistAll(`Corrida eliminada: ${tipoLabelDe(kind, tipoPeriodo)} del ${fmtDate(fecha)}`);
       rerender();
     });
+  });
+
+  const btnGenerarInfNominaMes = root.querySelector('#btnGenerarInfNominaMes');
+  if (btnGenerarInfNominaMes) btnGenerarInfNominaMes.addEventListener('click', () => {
+    const mes = root.querySelector('#nomInfMes').value;
+    if (!mes) { toast('Seleccione el mes.', 'error'); return; }
+    const { contenidoHtml, csvHeaders, csvRows } = construirInformeNominaMensualHTML(mes);
+    const cont = root.querySelector('#nomInfMesResultado');
+    cont.innerHTML = '';
+    cont.appendChild(informeConAcciones({ contenidoHtml, filename: `nomina-mensual-${mes}.pdf`, pdfTitle: 'Nómina mensual', csvHeaders, csvRows }));
   });
 
   const btnGenerarInfNomina = root.querySelector('#btnGenerarInfNomina');

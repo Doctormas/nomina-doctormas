@@ -12,6 +12,7 @@ export const ICONS = {
   liquidacion: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'),
   informes: svg('<path d="M4 20V10M11 20V4M18 20v-7"/><path d="M2 20h20"/>'),
   parafiscales: svg('<path d="M3 21h18"/><path d="M4 21V10M20 21V10"/><path d="M2 10l10-6 10 6"/><path d="M8 10v11M12 10v11M16 10v11"/>'),
+  candado: svg('<rect x="4" y="10.5" width="16" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.3"/>'),
   cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-8.98A5.5 5.5 0 0 1 17.2 8.2 4 4 0 0 1 17 18H7z"/>'),
   refresh: svg('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v6h-6"/>')
 };
