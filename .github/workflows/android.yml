@@ -7,7 +7,14 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch: {}
+  # Manual: arma el APK desde la rama principal y, si se indica la versión
+  # (ej. v1.0.17), lo agrega a esa versión ya publicada.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Versión a la que agregar el APK (ej. v1.0.17). Vacío = solo guardarlo como artefacto.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -27,7 +34,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Aceptar licencias del SDK de Android (el runner ya trae el SDK)
+        run: |
+          SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          echo "sdkmanager: $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
 
       - name: Instalar dependencias del empaquetado
         working-directory: movil
@@ -79,12 +90,13 @@ jobs:
           path: salida/*.apk
 
       - name: Agregar el APK a la versión publicada (GitHub Release)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_MANUAL: ${{ github.event.inputs.tag }}
         run: |
           set -e
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${TAG_MANUAL:-$GITHUB_REF_NAME}"
           # El instalador de Windows crea la versión; se espera a que exista (hasta ~15 min).
           for i in $(seq 1 60); do
             if gh release view "$TAG" >/dev/null 2>&1; then break; fi
