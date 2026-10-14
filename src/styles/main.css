@@ -465,3 +465,52 @@ tbody tr:hover td{background:#fbf8f5;}
 .sidebar-user button:hover{background:rgba(255,255,255,.12);}
 .app-shell.sidebar-collapsed .sidebar-user .su-name{display:none;}
 .app-shell.sidebar-collapsed .sidebar-user{justify-content:center;padding:10px 0 0;}
+
+/* ---------- Teléfono (APK) y pantallas angostas ---------- */
+.menu-movil,.menu-backdrop{display:none;}
+@media (max-width:820px){
+  html,body{height:100%;}
+  .app-shell,.app-shell.sidebar-collapsed{display:block;height:100vh;height:100dvh;}
+  .main-col{height:100vh;height:100dvh;}
+  /* El menú lateral pasa a ser un cajón que se abre con ☰ */
+  .sidebar,.app-shell.sidebar-collapsed .sidebar{
+    position:fixed;left:0;top:0;bottom:0;width:272px;max-width:84vw;z-index:300;
+    transform:translateX(-102%);transition:transform .2s ease;
+    padding-top:env(safe-area-inset-top);
+  }
+  .app-shell.menu-abierto .sidebar{transform:none;box-shadow:var(--shadow-lg);}
+  .menu-backdrop{position:fixed;inset:0;background:rgba(40,20,10,.45);z-index:250;}
+  .app-shell.menu-abierto .menu-backdrop{display:block;}
+  .sidebar-toggle,.brand-icon,.app-shell.sidebar-collapsed .brand-icon{display:none !important;}
+  .app-shell.sidebar-collapsed .sidebar-brand{display:block;}
+  .app-shell.sidebar-collapsed .sidebar-nav button{justify-content:flex-start;gap:10px;padding:10px 12px;}
+  .app-shell.sidebar-collapsed .sidebar-nav button span,.app-shell.sidebar-collapsed .sidebar-footer span{display:inline;}
+  .app-shell.sidebar-collapsed .sidebar-footer{justify-content:space-between;padding:12px 12px 14px 18px;}
+  .sidebar-nav button{padding:13px 12px;font-size:.95rem;}
+
+  .topbar{height:auto;min-height:56px;padding:calc(6px + env(safe-area-inset-top)) 12px 6px;gap:8px;flex-wrap:wrap;}
+  .menu-movil{display:flex;align-items:center;justify-content:center;width:42px;height:42px;flex:none;
+    border:1px solid var(--line-strong);border-radius:10px;background:var(--white);color:var(--burgundy);font-size:1.3rem;cursor:pointer;}
+  .topbar-title{font-size:1.1rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .topbar-right{gap:8px;width:100%;justify-content:flex-end;}
+  #clockLabel,#syncHeaderLabel{display:none !important;}
+  .rate-chip{font-size:.72rem;}
+  .notif-panel{position:fixed;left:10px;right:10px;top:70px;width:auto;}
+
+  main.content{padding:14px 12px calc(40px + env(safe-area-inset-bottom));}
+  .card{padding:16px 14px;}
+  .grid.cols-2,.grid.cols-3,.grid.cols-4{grid-template-columns:1fr;}
+
+  /* Tablas anchas: se deslizan de lado dentro de la tarjeta */
+  .card table,.table-wrap table{display:block;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .pill-toggle{max-width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;}
+  .pill-toggle button{flex:none;white-space:nowrap;}
+  .btn-row{gap:8px;}
+  .btn{min-height:42px;}
+  .btn.small{min-height:36px;}
+  input,select,textarea{font-size:16px;}
+
+  .modal-overlay{padding:10px;}
+  .modal{max-width:100%;padding:18px 16px;}
+  .login-overlay{padding:16px;align-items:flex-start;padding-top:calc(24px + env(safe-area-inset-top));}
+}

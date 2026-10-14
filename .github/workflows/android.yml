@@ -1,0 +1,97 @@
+name: Publicar APK (Android)
+
+# Se dispara con la misma etiqueta de versión que el instalador de Windows
+# (ej. v1.0.17). Arma el APK firmado de la app para el teléfono con Capacitor y
+# lo agrega a la MISMA versión (GitHub Release), junto al instalador de Windows.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Instalar dependencias del empaquetado
+        working-directory: movil
+        run: npm ci
+
+      - name: Armar el proyecto Android
+        working-directory: movil
+        run: |
+          node scripts/preparar.js
+          npx cap add android
+          node scripts/nativo.js
+          npx cap sync android
+
+      - name: Compilar (release sin firmar)
+        working-directory: movil/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Firmar y alinear el APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          set -e
+          VERSION=$(node -p "require('./package.json').version")
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          SIN_FIRMAR=$(ls movil/android/app/build/outputs/apk/release/*.apk | head -1)
+          echo "Build-tools: $BT"
+          echo "APK sin firmar: $SIN_FIRMAR"
+          mkdir -p salida
+          "$BT/zipalign" -p -f 4 "$SIN_FIRMAR" salida/alineado.apk
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > salida/llave.p12
+            "$BT/apksigner" sign --ks salida/llave.p12 --ks-key-alias nomina --ks-pass "pass:$KEYSTORE_PASS" \
+              --out "salida/Nomina-Doctormas-$VERSION.apk" salida/alineado.apk
+            rm -f salida/llave.p12
+          else
+            echo "::warning::Sin llave de firma en los secretos: se firma con una llave de depuración (no se podrá actualizar encima)."
+            keytool -genkeypair -keystore salida/debug.jks -storepass android -keypass android -alias debug \
+              -dname "CN=Debug" -keyalg RSA -keysize 2048 -validity 10000
+            "$BT/apksigner" sign --ks salida/debug.jks --ks-pass pass:android --out "salida/Nomina-Doctormas-$VERSION.apk" salida/alineado.apk
+          fi
+          "$BT/apksigner" verify --print-certs "salida/Nomina-Doctormas-$VERSION.apk" | head -3
+          rm -f salida/alineado.apk salida/debug.jks
+          ls -la salida
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: salida/*.apk
+
+      - name: Agregar el APK a la versión publicada (GitHub Release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          # El instalador de Windows crea la versión; se espera a que exista (hasta ~15 min).
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            echo "Esperando que exista la versión $TAG ($i/60)…"
+            sleep 15
+          done
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "Versión $TAG"
+          fi
+          gh release upload "$TAG" salida/*.apk --clobber

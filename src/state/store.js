@@ -1,6 +1,8 @@
 // Estado central de la app (equivalente a las variables globales CONFIG/EMPLEADOS/…
 // del archivo original) + persistencia vía IPC en vez de localStorage.
 
+import { descifrarParalela, combinarParalela } from '../lib/paralelaCrypto.js';
+
 function defaultConfig() {
   return {
     salarioMinimo: 130,          // Bs./mes — salario mínimo legal vigente (Art. 129 LOTTT)
@@ -119,6 +121,10 @@ export const state = {
   // este computador — no entra a la sincronización con el equipo, ni al
   // historial compartido, ni a los respaldos automáticos.
   PARALELA: { pinHash: '', salt: '', pagos: [] },
+  // Clave con la que se cifra la paralela para la nube. Solo local: nunca viaja.
+  PARALELA_CLAVE: '',
+  // 'clave' si la nube trae una paralela que esta clave no abre; 'sin-clave' si falta la clave.
+  PARALELA_ESTADO: '',
   // Usuarios y tipos de usuario (permisos por módulo). Se comparten al
   // sincronizar para que las mismas cuentas sirvan en todos los equipos.
   USUARIOS: [],
@@ -192,6 +198,7 @@ export async function loadState() {
   state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
   state.RESPALDOS_AUTO = data.RESPALDOS_AUTO || [];
   state.PARALELA = Object.assign({ pinHash: '', salt: '', pagos: [] }, data.PARALELA || {});
+  state.PARALELA_CLAVE = data.PARALELA_CLAVE || '';
   state.USUARIOS = data.USUARIOS || [];
   state.ROLES = (data.ROLES && data.ROLES.length) ? data.ROLES : rolesPorDefecto();
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
@@ -217,7 +224,7 @@ function collectStorageDoc() {
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
-    PARALELA: state.PARALELA,
+    PARALELA: state.PARALELA, PARALELA_CLAVE: state.PARALELA_CLAVE,
     USUARIOS: state.USUARIOS, ROLES: state.ROLES,
     PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC, CAMBIOS_SIN_SINCRONIZAR: !!state.CAMBIOS_SIN_SINCRONIZAR,
@@ -232,7 +239,9 @@ const MAX_HISTORIAL_CAMBIOS = 300;
 // Los respaldos SÍ pesan (son los datos completos, no un renglón de texto),
 // así que aquí el tope es mucho más chico — alcanza para volver atrás de un
 // error reciente, sin que el archivo guardado crezca sin control.
-export const MAX_RESPALDOS_AUTO = 25;
+// En el teléfono se guardan menos copias: cada una trae los datos completos y
+// el espacio y la velocidad de guardado importan más allí.
+export const MAX_RESPALDOS_AUTO = (typeof window !== 'undefined' && window.__esMovil) ? 5 : 25;
 
 function idCorto() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -365,6 +374,21 @@ export async function applyFullState(data) {
   // app (o un respaldo viejo) sube el documento sin usuarios.
   if (Array.isArray(data.USUARIOS) && data.USUARIOS.length) state.USUARIOS = data.USUARIOS;
   if (Array.isArray(data.ROLES) && data.ROLES.length) state.ROLES = data.ROLES;
+  // Nómina paralela: viene cifrada. Se abre con la clave de este equipo y se
+  // combina con la local (nunca se pisa: los pagos se unen por id).
+  state.PARALELA_ESTADO = '';
+  if (data.PARALELA_CIFRADA) {
+    if (!state.PARALELA_CLAVE) {
+      state.PARALELA_ESTADO = 'sin-clave';
+    } else {
+      try {
+        const remota = await descifrarParalela(data.PARALELA_CIFRADA, state.PARALELA_CLAVE);
+        state.PARALELA = Object.assign(state.PARALELA || {}, combinarParalela(state.PARALELA, remota));
+      } catch (e) {
+        state.PARALELA_ESTADO = 'clave';
+      }
+    }
+  }
   // El mayor entre lo local y lo remoto — nunca retrocede el correlativo,
   // aunque el otro equipo no lo haya subido en esta sincronización.
   state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);

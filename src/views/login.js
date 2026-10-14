@@ -3,6 +3,7 @@
 import { state, persistAll } from '../state/store.js';
 import { hashClave, saltAleatoria, codigoRecuperacion, ROL_MASTER } from '../lib/auth.js';
 import { uid } from '../lib/formato.js';
+import { syncConnect } from '../lib/sync.js';
 
 const esc = (s) => String(s === undefined || s === null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -51,8 +52,10 @@ function crearMaster(entrar) {
     <div class="field"><label>Clave (mínimo ${MIN_CLAVE} caracteres)</label><input type="password" id="lgClave" autocomplete="off"></div>
     <div class="field"><label>Repetir clave</label><input type="password" id="lgClave2" autocomplete="off"></div>
     <div class="login-msg" style="display:none;"></div>
-    <button class="btn" id="lgCrear" style="width:100%;margin-top:12px;">Crear y continuar</button>`);
+    <button class="btn" id="lgCrear" style="width:100%;margin-top:12px;">Crear y continuar</button>
+    <div style="text-align:center;margin-top:14px;"><a href="#" id="lgConectar" class="login-link">Ya uso la app en otro equipo: conectar con la nube</a></div>`);
   const q = (s) => el.querySelector(s);
+  q('#lgConectar').addEventListener('click', (e) => { e.preventDefault(); conectarNube(el, entrar); });
   q('#lgNombre').focus();
   const crear = async () => {
     const nombre = q('#lgNombre').value.trim();
@@ -84,12 +87,48 @@ function mostrarCodigo(el, codigo, continuar) {
     <h2>Código de recuperación</h2>
     <p class="login-desc">Anótelo y guárdelo en un lugar seguro. Es la <b>única</b> forma de recuperar la clave del master si la olvida, y no se vuelve a mostrar.</p>
     <div class="login-codigo">${esc(codigo)}</div>
-    <label style="display:flex;gap:8px;align-items:center;font-size:.85rem;margin-top:14px;"><input type="checkbox" id="lgAnote"> Ya lo anoté</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.85rem;margin-top:14px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--charcoal);"><input type="checkbox" id="lgAnote" style="width:auto;"> Ya lo anoté</label>
     <button class="btn" id="lgSeguir" style="width:100%;margin-top:12px;" disabled>Continuar</button>`;
   const chk = el.querySelector('#lgAnote');
   const btn = el.querySelector('#lgSeguir');
   chk.addEventListener('change', () => { btn.disabled = !chk.checked; });
   btn.addEventListener('click', continuar);
+}
+
+/* ---------- Equipo nuevo: traer usuarios y datos desde la nube ---------- */
+function conectarNube(el, entrar) {
+  el.querySelector('.login-body').innerHTML = `
+    <h2>Conectar con la nube</h2>
+    <p class="login-desc">Escriba los datos del servidor que ya usan en la computadora (Configuración → Nube). Se traen sus usuarios y datos; luego inicia sesión con su usuario de siempre.</p>
+    <div class="field"><label>URL del servidor</label><input type="text" id="cnUrl" placeholder="https://…workers.dev" autocapitalize="off" autocomplete="off"></div>
+    <div class="field"><label>PIN de acceso</label><input type="password" id="cnPin" autocomplete="off"></div>
+    <div class="login-msg" style="display:none;"></div>
+    <button class="btn" id="cnOk" style="width:100%;margin-top:12px;">Conectar</button>
+    <div style="text-align:center;margin-top:12px;"><a href="#" id="cnVolver" class="login-link">Volver</a></div>`;
+  const q = (s) => el.querySelector(s);
+  q('#cnVolver').addEventListener('click', (e) => { e.preventDefault(); el.remove(); crearMaster(entrar); });
+  q('#cnOk').addEventListener('click', async () => {
+    const url = q('#cnUrl').value.trim();
+    const pin = q('#cnPin').value;
+    if (!/^https:\/\//i.test(url) || !pin) return msg(el, 'Escriba la URL (https://…) y el PIN.');
+    q('#cnOk').disabled = true; q('#cnOk').textContent = 'Conectando…';
+    state.SYNC.url = url; state.SYNC.pin = pin;
+    try {
+      await syncConnect();
+    } catch (err) {
+      state.SYNC.url = ''; state.SYNC.pin = '';
+      q('#cnOk').disabled = false; q('#cnOk').textContent = 'Conectar';
+      return msg(el, 'No se pudo conectar: ' + err.message + '. Revise la URL, el PIN y la conexión a internet.');
+    }
+    if (!state.USUARIOS.length) {
+      state.SYNC.url = ''; state.SYNC.pin = '';
+      q('#cnOk').disabled = false; q('#cnOk').textContent = 'Conectar';
+      return msg(el, 'La nube no tiene usuarios todavía. Cree primero el usuario master en la computadora y guarde en la nube.');
+    }
+    await persistAll();
+    el.remove();
+    iniciarSesion(entrar);
+  });
 }
 
 /* ---------- Iniciar sesión ---------- */

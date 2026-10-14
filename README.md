@@ -76,3 +76,14 @@ src/
   assets/fonts/   tipografías empaquetadas localmente
 assets/icons/     ícono de la app (placeholder — reemplazar por diseño final)
 ```
+
+## Versión para el teléfono (APK)
+
+El código de la app (`src/`) también corre en Android, empaquetado con
+Capacitor desde la carpeta `movil/`. Al subir una etiqueta de versión
+(`vX.Y.Z`), el flujo `.github/workflows/android.yml` arma el APK firmado y lo
+agrega a la misma versión publicada, junto al instalador de Windows.
+La llave de firma vive en los secretos del repositorio
+(`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASS`); hay que conservar una copia
+(`movil/llave/`, fuera de git): sin ella, el teléfono no aceptaría
+actualizaciones encima de la versión instalada.

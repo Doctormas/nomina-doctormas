@@ -1,0 +1,6 @@
+node_modules/
+www/
+android/
+*.keystore
+*.p12
+llave/

@@ -2,13 +2,15 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: https://ve.dolarapi.com https://*.workers.dev; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://ve.dolarapi.com https://*.workers.dev;">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: https://ve.dolarapi.com https://*.workers.dev; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://ve.dolarapi.com https://*.workers.dev https://api.github.com;">
 <title>Nómina Doctormás</title>
 <link rel="stylesheet" href="styles/main.css">
 </head>
 <body>
 
-<div class="app-shell">
+<div class="app-shell" id="appShell">
+<div class="menu-backdrop" id="menuBackdrop"></div>
   <aside class="sidebar">
     <button id="btnSidebarToggle" class="sidebar-toggle" title="Contraer barra lateral" aria-label="Contraer barra lateral">‹</button>
     <div class="sidebar-brand">
@@ -26,6 +28,7 @@
 
   <div class="main-col">
     <header class="topbar">
+      <button id="btnMenuMovil" class="menu-movil" aria-label="Abrir menú">☰</button>
       <div class="topbar-title" id="topbarTitle">Resumen</div>
       <div class="topbar-right">
         <button id="btnCargarNube" class="btn ghost small" style="display:none;" title="Traer los cambios que haya guardado el resto del equipo">🔄 Cargar</button>
@@ -52,6 +55,7 @@
   </div>
 </div>
 
+<script src="platform/web-api.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

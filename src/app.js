@@ -68,6 +68,7 @@ async function exigirAcceso() {
 }
 
 export function render() {
+  document.getElementById('appShell')?.classList.remove('menu-abierto');
   if (!sesionVigente()) { exigirAcceso(); return; }
   // Si el tipo de usuario no incluye el módulo, se cae al primero permitido.
   if (!puedeVer(ACTIVE_TAB)) {
@@ -142,6 +143,16 @@ function wireSidebarToggle() {
     persistAll();
   });
   applySidebarCollapsed();
+}
+
+/* ---------- Menú tipo cajón (teléfono) ---------- */
+function wireMenuMovil() {
+  const shell = document.getElementById('appShell');
+  const abrir = document.getElementById('btnMenuMovil');
+  const fondo = document.getElementById('menuBackdrop');
+  if (!shell || !abrir) return;
+  abrir.addEventListener('click', () => shell.classList.toggle('menu-abierto'));
+  if (fondo) fondo.addEventListener('click', () => shell.classList.remove('menu-abierto'));
 }
 
 function renderSidebar() {
@@ -230,7 +241,8 @@ async function actualizarHistoricoTasaAuto() {
 async function boot() {
   await loadState();
   document.getElementById('sidebarVersion').textContent =
-    'v' + (await (window.api ? window.api.app.getVersion() : Promise.resolve('1.0.0'))) + ' · escritorio';
+    'v' + (await (window.api ? window.api.app.getVersion() : Promise.resolve('1.0.0'))) +
+    (window.__esMovil ? ' · teléfono' : (document.documentElement.classList.contains('plataforma-web') ? ' · web' : ' · escritorio'));
   document.getElementById('btnConfigGear').innerHTML = ICONS.config;
   document.getElementById('btnConfigGear').addEventListener('click', () => {
     ACTIVE_TAB = 'config';
@@ -255,6 +267,7 @@ async function boot() {
   wireUpdater();
   wireNotifCenter();
   wireSidebarToggle();
+  wireMenuMovil();
   setInterval(renderNotifBadge, 5 * 60 * 1000); // por si pasa un día abierta y se acerca el cierre de quincena
 
   updateTasaHeaderLabel(state.TASA.valor ? 'cache' : 'loading');

@@ -5,7 +5,8 @@
 // jamás tocan PERIODOS / BONO_*_PAGADO, y por eso no afectan DPP, parafiscales,
 // ISLR, informes ni notificaciones. Tampoco se sincronizan ni entran al
 // Historial de modificaciones.
-import { state, persistAll, empresaConRif, tasaEnFecha } from '../state/store.js';
+import { state, persistAll, empresaConRif, tasaEnFecha, syncConfigured } from '../state/store.js';
+import { descifrarParalela } from '../lib/paralelaCrypto.js';
 import { logoHeaderHTML } from '../lib/logo.js';
 import { fmtDate, fmtNum, todayStr, uid } from '../lib/formato.js';
 import { confirmDialog } from '../components/confirm.js';
@@ -20,7 +21,7 @@ const MODULOS = [
   { id: 'nuevo', label: 'Correr nómina' },
   { id: 'historial', label: 'Historial' },
   { id: 'informes', label: 'Informes' },
-  { id: 'respaldo', label: 'Respaldo' }
+  { id: 'respaldo', label: 'Sincronización y respaldo' }
 ];
 let MODULO_ACTIVO = 'empleados';
 let MES_FILTRO = '';
@@ -177,8 +178,10 @@ function wireEmpleados(root, rerender) {
     filas().forEach((tr) => {
       const q1 = Number(tr.querySelector('.bnQ1').value) || 0;
       const q2 = Number(tr.querySelector('.bnQ2').value) || 0;
-      if (q1 > 0 || q2 > 0) bonos[tr.dataset.emp] = { moneda: tr.querySelector('.bnMoneda').value, q1, q2 };
-      else delete bonos[tr.dataset.emp];
+      const moneda = tr.querySelector('.bnMoneda').value;
+      const previo = bonos[tr.dataset.emp];
+      const igual = previo && previo.moneda === moneda && Number(previo.q1) === q1 && Number(previo.q2) === q2;
+      if (!igual && (previo || q1 > 0 || q2 > 0)) bonos[tr.dataset.emp] = { moneda, q1, q2, mod: new Date().toISOString() };
     });
     P.bonos = bonos;
     await persistAll(); // sin etiqueta: no entra al historial compartido
@@ -205,6 +208,7 @@ function wireEmpleados(root, rerender) {
     x.numeroCuenta = q('#perCuenta').value.trim();
     x.telefono = q('#perTelefono').value.trim();
     x.correo = q('#perCorreo').value.trim();
+    x.mod = new Date().toISOString();
     if (!existente) P.personas.push(x);
     await persistAll();
     PERSONA_EDITANDO = null;
@@ -215,6 +219,7 @@ function wireEmpleados(root, rerender) {
     const x = paralela().personas.find((y) => y.id === b.dataset.perToggle);
     if (!x) return;
     x.activo = x.activo === false;
+    x.mod = new Date().toISOString();
     await persistAll();
     rerender();
   }));
@@ -229,7 +234,8 @@ function wireEmpleados(root, rerender) {
     });
     if (!ok) return;
     P.personas = P.personas.filter((y) => y.id !== x.id);
-    delete P.bonos[x.id];
+    P.bonos[x.id] = { moneda: 'USD', q1: 0, q2: 0, mod: new Date().toISOString() };
+    (P.eliminados = P.eliminados || []).push(x.id);
     await persistAll();
     rerender();
   }));
@@ -529,6 +535,7 @@ function wireHistorial(root, rerender) {
       });
       if (!ok) return;
       P.pagos = P.pagos.filter((x) => x.id !== p.id);
+      (P.eliminados = P.eliminados || []).push(p.id);
       await persistAll();
       toast('Pago eliminado.', 'success');
       rerender();
@@ -562,11 +569,31 @@ function wireInformes(root) {
 }
 
 /* ---------- Respaldo ---------- */
-function respaldoHTML() {
+function sincronizacionHTML() {
+  const tiene = !!state.PARALELA_CLAVE;
+  const aviso = state.PARALELA_ESTADO === 'clave'
+    ? '<div class="note" style="background:var(--red-tint);color:var(--red);border-color:transparent;">La clave guardada en este equipo NO abre la nómina paralela que hay en la nube. Escriba la clave correcta.</div>'
+    : (state.PARALELA_ESTADO === 'sin-clave'
+      ? '<div class="note">Hay una nómina paralela en la nube, pero este equipo aún no tiene la clave para abrirla. Escríbala abajo.</div>'
+      : (tiene ? '<div class="note" style="background:var(--green-tint);color:var(--green);border-color:transparent;">✓ Este equipo tiene la clave: la nómina paralela se sincroniza cifrada con la nube.</div>' : ''));
   return `
   <div class="card" style="max-width:640px;">
+    <h2>Sincronización cifrada con la nube</h2>
+    <div class="desc">Para ver y operar la nómina paralela en el teléfono y en la computadora, se sincroniza <b>cifrada</b>: en la nube solo hay texto ilegible, y solo quien tenga esta clave puede abrirla. Defina una clave (distinta a su clave de usuario) y escríbala igual en cada equipo. <b>Si la pierde, nadie podrá recuperar los datos cifrados de la nube</b> (los de cada equipo siguen ahí).</div>
+    ${aviso}
+    <div class="grid cols-2" style="margin-top:10px;">
+      <div class="field"><label>Clave de la nómina paralela</label><input type="password" id="parClaveSync" autocomplete="new-password" placeholder="${tiene ? 'Ya hay una clave guardada en este equipo' : 'Mínimo 8 caracteres'}"></div>
+      <div class="field" style="align-self:end;"><button class="btn" id="btnParClaveSync">${tiene ? 'Cambiar clave de este equipo' : 'Guardar clave y sincronizar'}</button></div>
+    </div>
+    ${tiene ? '<div class="btn-row" style="margin-top:8px;"><button class="btn ghost small" id="btnParQuitarClave">Quitar la clave de este equipo</button></div>' : ''}
+  </div>`;
+}
+
+function respaldoHTML() {
+  return sincronizacionHTML() + `
+  <div class="card" style="max-width:640px;">
     <h2>Respaldo de esta sección</h2>
-    <div class="desc">Los pagos de la nómina paralela se guardan solo en este computador (no se sincronizan ni entran a los respaldos de la nómina normal). Descargue un respaldo para no perderlos si cambia de equipo.</div>
+    <div class="desc">Además de la sincronización cifrada, puede descargar un respaldo de la nómina paralela en un archivo (pagos, personas y bonos) para guardarlo aparte.</div>
     <div class="btn-row">
       <button class="btn secondary" id="btnRespaldoPar">Descargar respaldo</button>
       <button class="btn ghost" id="btnRestaurarPar">Restaurar desde archivo…</button>
@@ -576,6 +603,49 @@ function respaldoHTML() {
 }
 
 function wireRespaldo(root, rerender) {
+  const btnClave = root.querySelector('#btnParClaveSync');
+  if (btnClave) btnClave.addEventListener('click', async () => {
+    const clave = root.querySelector('#parClaveSync').value;
+    if (clave.length < 8) return toast('La clave debe tener al menos 8 caracteres.', 'error');
+    btnClave.disabled = true;
+    try {
+      // Si ya hay paralela en la nube, esta clave debe poder abrirla.
+      if (syncConfigured()) {
+        const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/state', { headers: { 'X-Access-Pin': state.SYNC.pin } });
+        if (res.ok) {
+          const j = await res.json();
+          const blob = j && j.data ? j.data.PARALELA_CIFRADA : null;
+          if (blob) {
+            try { await descifrarParalela(blob, clave); } catch (e) { btnClave.disabled = false; return toast('Esa clave NO abre la nómina paralela que ya está en la nube. Verifique la clave.', 'error'); }
+          }
+        }
+      }
+      state.PARALELA_CLAVE = clave;
+      state.PARALELA_ESTADO = '';
+      if (syncConfigured()) {
+        // Trae y combina lo de la nube, y sube lo local cifrado.
+        const { syncPull, syncPush } = await import('../lib/sync.js');
+        await syncPull(true);
+        await syncPush();
+        toast('Clave guardada. Nómina paralela sincronizada (cifrada).', 'success');
+      } else {
+        await persistAll();
+        toast('Clave guardada. Configure la nube en Configuración → Nube para sincronizar.', 'success');
+      }
+    } catch (err) {
+      toast('No se pudo completar: ' + err.message, 'error');
+    }
+    rerender();
+  });
+  const btnQuitar = root.querySelector('#btnParQuitarClave');
+  if (btnQuitar) btnQuitar.addEventListener('click', async () => {
+    const ok = await confirmDialog({ title: 'Quitar la clave', message: 'Este equipo dejará de sincronizar la nómina paralela con la nube (sus datos locales se conservan). Podrá volver a poner la clave cuando quiera.', confirmLabel: 'Quitar' });
+    if (!ok) return;
+    state.PARALELA_CLAVE = '';
+    await persistAll();
+    rerender();
+  });
+
   root.querySelector('#btnRespaldoPar').addEventListener('click', async () => {
     const P = paralela();
     const json = JSON.stringify({ tipo: 'nomina-paralela', version: 2, generado: new Date().toISOString(), pagos: P.pagos, personas: P.personas, bonos: P.bonos }, null, 2);
