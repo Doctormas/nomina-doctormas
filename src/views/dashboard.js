@@ -4,7 +4,6 @@ import { state, tasaEnFecha, getTasaActualValor } from '../state/store.js';
 import { salarioVigente, estadoVacaciones, cestaticketEmp } from '../lib/calculos.js';
 import { fmt } from '../lib/moneda.js';
 import { todayStr, parseDate, fmtDate, fmtNum } from '../lib/formato.js';
-import { exportBackup, importBackup } from '../lib/backup.js';
 import { calcularNotificaciones } from '../lib/notificaciones.js';
 import { pagosAlrededor, fechaPagoQuincena, MESES } from '../lib/calendarioPagos.js';
 import { puedeVer } from '../lib/auth.js';
@@ -167,8 +166,8 @@ export function render(root, rerender) {
   const sync = state.SYNC || {};
   const nubeTxt = sync.url
     ? (state.CAMBIOS_SIN_SINCRONIZAR
-      ? '<span class="tag warn">Hay cambios sin guardar en la nube</span>'
-      : '<span class="tag ok">Todo guardado en la nube</span>')
+      ? '<span class="tag warn">Subiendo cambios a la nube…</span>'
+      : '<span class="tag ok">Todo sincronizado con la nube</span>')
     : '<span class="tag">Sin conectar a la nube</span>';
 
   const alertasHTML = alertas.length
@@ -220,11 +219,6 @@ export function render(root, rerender) {
       <div class="dash-depto-top"><span>${esc(nombre)}</span><b>${n}</b></div>
       <div class="dash-depto-barra"><i style="width:${(n / maxDepto) * 100}%;"></i></div>
     </div>`).join('') || '<div class="dash-vacio">Sin empleados activos.</div>';
-
-  const accesos = [
-    ['nomina', 'Generar nómina', 'nomina'], ['empleados', 'Empleados', 'empleados'], ['parafiscales', 'Parafiscales', 'parafiscales'],
-    ['vacaciones', 'Vacaciones', 'vacaciones'], ['liquidacion', 'Liquidación', 'liquidacion'], ['paralela', 'Nómina paralela', 'paralela']
-  ].filter(([id]) => puedeVer(id));
 
   root.innerHTML = `
   <div class="dash-saludo">
@@ -299,28 +293,7 @@ export function render(root, rerender) {
       <div class="dash-card-h"><h3>Vacaciones por disfrutar</h3><small>quienes más acumulan</small></div>
       ${vacHTML}
     </div>
-  </div>
-
-  ${accesos.length ? `<div class="card dash-card">
-    <div class="dash-card-h"><h3>Accesos rápidos</h3></div>
-    <div class="dash-accesos">${accesos.map(([id, texto, tab]) => `<button type="button" class="btn secondary" data-ir="${tab}">${esc(texto)}</button>`).join('')}</div>
-  </div>` : ''}
-
-  <details class="card dash-card dash-respaldo">
-    <summary><b>Respaldo de datos</b> <small>exportar o restaurar toda la información</small></summary>
-    <div class="desc" style="margin-top:10px;">Exporte periódicamente un respaldo, sobre todo antes de reinstalar o cambiar de equipo.</div>
-    <div class="btn-row">
-      <button class="btn secondary" id="btnExport">Exportar respaldo (.json)</button>
-      <button class="btn ghost" id="btnImport">Importar respaldo</button>
-      <button class="btn ghost" id="btnOpenDataDir">Abrir carpeta de datos</button>
-    </div>
-  </details>`;
+  </div>`;
 
   root.querySelectorAll('[data-ir]').forEach((b) => b.addEventListener('click', () => ir(b.dataset.ir)));
-  root.querySelector('#btnExport').addEventListener('click', exportBackup);
-  root.querySelector('#btnImport').addEventListener('click', () => importBackup(rerender));
-  root.querySelector('#btnOpenDataDir').addEventListener('click', async () => {
-    const dir = await window.api.store.dataDir();
-    await window.api.shell.openPath(dir);
-  });
 }

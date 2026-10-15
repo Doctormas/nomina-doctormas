@@ -4,9 +4,12 @@
 //  - BAJAR: al abrir, al volver a la app y cada ~45 s se consulta (liviano) si
 //    hay una revisión más nueva; si no hay cambios locales pendientes se trae.
 //  - CHOQUE: si otro equipo guardó mientras usted tenía cambios sin subir, el
-//    servidor lo detecta (revisión) y NADA se pisa: se le pregunta qué hacer, y
-//    siempre queda una copia en Configuración → Historial para volver atrás.
-import { state, syncConfigured, collectFullState, applyFullState, persistAll, alHaberCambios, registrarCopia } from '../state/store.js';
+//    servidor lo detecta (revisión) y NADA se pisa: los dos juegos de cambios se
+//    COMBINAN registro por registro (ver combinar.js). Solo si no se logra
+//    combinar se le pregunta qué hacer. Siempre queda una copia en
+//    Configuración → Historial para volver atrás.
+import { state, syncConfigured, collectFullState, applyFullState, persistAll, alHaberCambios, registrarCopia, fijarBaseSync } from '../state/store.js';
+import { combinarEstado } from './combinar.js';
 import { syncPush, syncPull, revisionEnNube } from './sync.js';
 import { updateSyncLabel } from '../components/statusbar.js';
 import { toast } from '../components/toast.js';
@@ -60,6 +63,7 @@ async function revisarNube() {
   const mia = Number.isInteger(state.SYNC.revision) ? state.SYNC.revision : 0;
   if (nube.revision <= mia) {
     if (state.CAMBIOS_SIN_SINCRONIZAR && !state.SYNC.conflicto) programarSubida();
+    else if (!state.CAMBIOS_SIN_SINCRONIZAR && !state.SYNC_BASE) { fijarBaseSync(); persistAll(); }
     return;
   }
   // Hay algo más nuevo en la nube.
@@ -106,10 +110,57 @@ function elegir(remoto) {
   });
 }
 
+/** Aplica el estado combinado en este equipo y deja lista la subida. */
+async function aplicarCombinado(estado, remoto) {
+  await applyFullState(Object.assign({}, estado, { PARALELA_CIFRADA: remoto.data ? remoto.data.PARALELA_CIFRADA : undefined }));
+  state.SYNC.revision = remoto.revision;
+  state.SYNC.lastSyncedAt = remoto.updatedAt;
+  state.SYNC.lastUpdatedBy = remoto.updatedBy;
+  state.CAMBIOS_SIN_SINCRONIZAR = true; // la combinación aún hay que subirla
+}
+
+function textoResumen(resumen, por) {
+  const partes = [];
+  if (resumen.nuevosRemotos + resumen.cambiadosRemotos + resumen.eliminadosRemotos > 0) {
+    partes.push(`${resumen.nuevosRemotos + resumen.cambiadosRemotos + resumen.eliminadosRemotos} de ${por || 'otro equipo'}`);
+  }
+  if (resumen.nuevosLocales + resumen.cambiadosLocales + resumen.eliminadosLocales > 0) {
+    partes.push(`${resumen.nuevosLocales + resumen.cambiadosLocales + resumen.eliminadosLocales} suyos`);
+  }
+  let t = `Se combinaron los cambios${partes.length ? ' (' + partes.join(' y ') + ')' : ''}.`;
+  if (resumen.conflictos.length) t += ` ${resumen.conflictos.length} dato(s) coincidían: se mantuvo su versión.`;
+  if (resumen.duplicadosQuitados) t += ` ${resumen.duplicadosQuitados} duplicado(s) quitado(s).`;
+  return t;
+}
+
+/** Combina lo local con lo que hay en la nube y lo sube. true si quedó sincronizado. */
+async function combinarYSubir(remoto) {
+  registrarCopia('Copia de la nube antes de combinar', remoto.data);
+  let actual = remoto;
+  for (let intento = 0; intento < 3; intento++) {
+    const { estado, resumen } = combinarEstado(state.SYNC_BASE, collectFullState(), actual.data);
+    await aplicarCombinado(estado, actual);
+    const r = await syncPush(etiqueta);
+    if (r && r.ok) {
+      if (alActualizarVista) alActualizarVista();
+      toast(textoResumen(resumen, actual.updatedBy), resumen.conflictos.length ? 'info' : 'success', 6000);
+      return true;
+    }
+    if (r && r.conflicto) { actual = r.remoto; continue; } // alguien guardó otra vez: se reintenta
+    if (alActualizarVista) alActualizarVista();
+    return false; // sin conexión: quedó combinado en este equipo, se sube cuando vuelva
+  }
+  return false;
+}
+
 async function manejarConflicto(remoto) {
   if (dialogoAbierto) return;
   dialogoAbierto = true;
   try {
+    if (remoto && remoto.data) {
+      const listo = await combinarYSubir(remoto);
+      if (listo || state.SYNC.status === 'error') return;
+    }
     const op = await elegir(remoto || {});
     if (op === 'nube') {
       registrarCopia('Copia de mis cambios antes de traer lo de la nube', collectFullState());
@@ -134,7 +185,7 @@ async function manejarConflicto(remoto) {
       else if (r && r.conflicto) toast('La nube volvió a cambiar. Intente de nuevo.', 'error');
     } else {
       state.SYNC.conflicto = { revision: remoto.revision, por: remoto.updatedBy || '' };
-      toast('Queda pendiente: use "Cargar" o "Guardar" cuando decida.', 'info', 5000);
+      toast('Queda pendiente: toque el indicador de la nube (arriba) cuando decida.', 'info', 5000);
     }
   } finally {
     dialogoAbierto = false;
@@ -142,7 +193,27 @@ async function manejarConflicto(remoto) {
   }
 }
 
-/** Para los botones manuales: si Guardar chocó, se muestra la misma pregunta. */
+/** Indicador de la nube (o "Sincronizar ahora"): sincroniza en ambos sentidos (combina si hay cambios propios). */
+export async function sincronizarManual() {
+  if (ocupado) return { ocupado: true };
+  ocupado = true;
+  try {
+    state.SYNC.conflicto = null;
+    if (state.CAMBIOS_SIN_SINCRONIZAR) {
+      const r = await syncPush(etiqueta);
+      if (r && r.conflicto) await manejarConflicto(r.remoto);
+      return r || {};
+    }
+    const r = await syncPull(false, etiqueta);
+    if (r && r.aplicado && alActualizarVista) alActualizarVista();
+    return r || {};
+  } finally {
+    ocupado = false;
+    etiqueta();
+  }
+}
+
+/** Si un guardado manual chocó, se combina (y si no se puede, se pregunta). */
 export async function resolverConflicto(remoto) {
   state.SYNC.conflicto = null;
   await manejarConflicto(remoto);

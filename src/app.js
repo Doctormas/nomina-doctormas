@@ -1,9 +1,8 @@
 import { state, loadState, syncConfigured, persistAll, actorDeSesion } from './state/store.js';
 import { fetchTasaBCV, importarHistoricoCompleto } from './lib/tasa.js';
 import { todayStr } from './lib/formato.js';
-import { syncPull, syncPush } from './lib/sync.js';
-import { iniciarAutoSync, resolverConflicto } from './lib/autoSync.js';
-import { confirmDialog } from './components/confirm.js';
+import { syncPull } from './lib/sync.js';
+import { iniciarAutoSync, sincronizarManual } from './lib/autoSync.js';
 import { ICONS } from './components/icons.js';
 import { toast } from './components/toast.js';
 import { exportBackup, importBackup } from './lib/backup.js';
@@ -244,8 +243,8 @@ function wireUpdater() {
 // hueco (la fuente ve.dolarapi.com guarda el histórico reciente).
 async function actualizarHistoricoTasaAuto() {
   try {
+    // Al guardar, la sincronización automática sube lo nuevo (con combinación si hay choque).
     await importarHistoricoCompleto('oficial', 'Oficial (BCV)', null, todayStr());
-    if (syncConfigured()) await syncPush();
     if (ACTIVE_TAB === 'config') render();
   } catch (err) {
     console.error('[app] no se pudo actualizar el histórico de tasas automáticamente:', err);
@@ -263,24 +262,11 @@ async function boot() {
     render();
   });
 
-  document.getElementById('btnGuardarNube').addEventListener('click', async () => {
-    const r = await syncPush(updateSyncLabel);
-    if (r && r.conflicto) { await resolverConflicto(r.remoto); return; }
-    toast(state.SYNC.status === 'ok' ? 'Cambios guardados en la nube.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
-  });
-
-  document.getElementById('btnCargarNube').addEventListener('click', async () => {
-    if (state.CAMBIOS_SIN_SINCRONIZAR) {
-      const ok = await confirmDialog({
-        title: 'Tiene cambios sin guardar',
-        message: 'Traer lo de la nube <b>descarta</b> los cambios que aún no se han subido. ¿Continuar?',
-        confirmLabel: 'Traer de la nube', danger: true
-      });
-      if (!ok) return;
-    }
-    state.SYNC.conflicto = null;
-    await syncPull(false, updateSyncLabel);
-    toast(state.SYNC.status === 'ok' ? 'Cambios traídos del servidor.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
+  // Indicador de la nube: la sincronización es automática; tocarlo la fuerza ahora.
+  document.getElementById('syncHeaderLabel').addEventListener('click', async () => {
+    const r = await sincronizarManual();
+    if (r && r.ocupado) { toast('Ya se está sincronizando…', 'info'); return; }
+    toast(state.SYNC.status === 'ok' ? 'Todo al día con la nube.' : (state.SYNC.status === 'conflicto' ? 'Hay cambios por resolver.' : 'No se pudo sincronizar. Verifique su conexión.'), state.SYNC.status === 'ok' ? 'success' : 'error');
     render();
   });
 

@@ -12,7 +12,7 @@
 <div class="app-shell" id="appShell">
 <div class="menu-backdrop" id="menuBackdrop"></div>
   <aside class="sidebar">
-    <button id="btnSidebarToggle" class="sidebar-toggle" title="Contraer barra lateral" aria-label="Contraer barra lateral">‹</button>
+    <button id="btnSidebarToggle" class="sidebar-toggle" title="Contraer barra lateral" aria-label="Contraer barra lateral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
     <div class="sidebar-brand">
       <img class="brand-logo" src="assets/img/logo-doctormas-wordmark-white.png" alt="Doctormás">
       <div class="sub">Sistema de nómina · LOTTT Venezuela</div>
@@ -31,9 +31,7 @@
       <button id="btnMenuMovil" class="menu-movil" aria-label="Abrir menú">☰</button>
       <div class="topbar-title" id="topbarTitle">Resumen</div>
       <div class="topbar-right">
-        <button id="btnCargarNube" class="btn ghost small" style="display:none;" title="Traer los cambios que haya guardado el resto del equipo">🔄 Cargar</button>
-        <button id="btnGuardarNube" class="btn small" style="display:none;" title="Guardar cambios en la nube">💾 Guardar</button>
-        <div class="sub" id="syncHeaderLabel" style="display:none;"></div>
+        <button type="button" id="syncHeaderLabel" class="sync-chip" style="display:none;" title="Sincronización automática con la nube. Toque para sincronizar ahora."></button>
         <div class="rate-chip" id="tasaHeaderLabel">Tasa: —</div>
         <div class="pill-toggle" id="currencyToggle">
           <button data-cur="VES" class="active">Bs.</button>

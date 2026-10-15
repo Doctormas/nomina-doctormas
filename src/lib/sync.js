@@ -1,6 +1,6 @@
 // Sincronización en la nube con el Worker propio de Cloudflare del equipo —
 // misma API y mismo protocolo (X-Access-Pin) del archivo original.
-import { state, syncConfigured, collectFullState, applyFullState, persistAll, actorDeSesion } from '../state/store.js';
+import { state, syncConfigured, collectFullState, applyFullState, persistAll, actorDeSesion, fijarBaseSync } from '../state/store.js';
 import { cifrarParalela, descifrarParalela, combinarParalela } from './paralelaCrypto.js';
 
 // Guardar el estado local como consecuencia de sincronizar no cuenta como
@@ -77,6 +77,7 @@ export async function syncPush(onStatus) {
       if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
       state.SYNC.status = 'ok';
       state.CAMBIOS_SIN_SINCRONIZAR = false;
+      fijarBaseSync();
       resultado = { ok: true };
     }
   } catch (err) {
@@ -121,6 +122,7 @@ export async function syncPull(silent, onStatus) {
       state.SYNC.lastUpdatedBy = j.updatedBy;
       if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
       state.CAMBIOS_SIN_SINCRONIZAR = false;
+      fijarBaseSync();
       aplicado = true;
     } else if (j && Number.isInteger(j.revision)) {
       state.SYNC.revision = j.revision;
@@ -147,6 +149,7 @@ export async function syncConnect() {
     state.SYNC.lastSyncedAt = j.updatedAt;
     state.SYNC.lastUpdatedBy = j.updatedBy;
     if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
+    fijarBaseSync();
   } else {
     await syncPush();
   }

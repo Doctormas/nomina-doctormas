@@ -121,6 +121,9 @@ export const state = {
   // este computador — no entra a la sincronización con el equipo, ni al
   // historial compartido, ni a los respaldos automáticos.
   PARALELA: { pinHash: '', salt: '', pagos: [] },
+  // Cómo estaba todo la última vez que este equipo sincronizó (para combinar por
+  // registro con la nube). Solo local: nunca viaja.
+  SYNC_BASE: null,
   // Clave con la que se cifra la paralela para la nube. Solo local: nunca viaja.
   PARALELA_CLAVE: '',
   // 'clave' si la nube trae una paralela que esta clave no abre; 'sin-clave' si falta la clave.
@@ -202,6 +205,7 @@ export async function loadState() {
   state.PARALELA = Object.assign({ pinHash: '', salt: '', pagos: [] }, data.PARALELA || {});
   state.PARALELA_CLAVE = data.PARALELA_CLAVE || '';
   state.SESION_RECORDADA = data.SESION_RECORDADA || null;
+  state.SYNC_BASE = data.SYNC_BASE || null;
   state.USUARIOS = data.USUARIOS || [];
   state.ROLES = (data.ROLES && data.ROLES.length) ? data.ROLES : rolesPorDefecto();
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
@@ -228,6 +232,7 @@ function collectStorageDoc() {
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
     PARALELA: state.PARALELA, PARALELA_CLAVE: state.PARALELA_CLAVE, SESION_RECORDADA: state.SESION_RECORDADA,
+    SYNC_BASE: state.SYNC_BASE,
     USUARIOS: state.USUARIOS, ROLES: state.ROLES,
     PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC, CAMBIOS_SIN_SINCRONIZAR: !!state.CAMBIOS_SIN_SINCRONIZAR,
@@ -345,6 +350,11 @@ export async function persistAll(seccion) {
   await window.api.store.save(collectStorageDoc());
   // Aviso para la sincronización automática: hay algo nuevo que subir.
   if (state.CAMBIOS_SIN_SINCRONIZAR && typeof alHaberCambiosFn === 'function') alHaberCambiosFn();
+}
+
+/** Marca "esto es lo último que se sincronizó con la nube" (base de la combinación). */
+export function fijarBaseSync() {
+  state.SYNC_BASE = JSON.parse(JSON.stringify(collectFullState()));
 }
 
 let alHaberCambiosFn = null;

@@ -8,6 +8,8 @@ import { toast } from '../components/toast.js';
 import { confirmDialog } from '../components/confirm.js';
 import { updateTasaHeaderLabel, updateSyncLabel } from '../components/statusbar.js';
 import { esMaster } from '../lib/auth.js';
+import { sincronizarManual } from '../lib/autoSync.js';
+import { exportBackup, importBackup } from '../lib/backup.js';
 import { usuariosHTML, wireUsuarios } from './usuarios.js';
 
 const MODULOS_TODOS = [
@@ -64,6 +66,15 @@ function historialHTML() {
   }).join('');
   return `
   <div class="card">
+    <h2>Respaldo de datos</h2>
+    <div class="desc">Exporte un respaldo de toda la información en un archivo, o restaure uno anterior. Hágalo sobre todo antes de reinstalar la app o cambiar de equipo.</div>
+    <div class="btn-row">
+      <button class="btn secondary" id="btnExport">Exportar respaldo (.json)</button>
+      <button class="btn ghost" id="btnImport">Importar respaldo</button>
+      <button class="btn ghost" id="btnOpenDataDir">Abrir carpeta de datos</button>
+    </div>
+  </div>
+  <div class="card">
     <h2>Historial de modificaciones</h2>
     <div class="desc">Quién guardó qué y cuándo — ficha de empleados, nómina, vacaciones, liquidaciones, parafiscales y parámetros de configuración. El "quién" es el nombre puesto en <b>Nube → Tu nombre</b>; si no lo ha puesto, sale como "Sin nombre". Si sincroniza con su equipo en la nube, este historial también se comparte, así cada quien ve lo que hizo el otro.</div>
     <div class="note">¿Se equivocó en algo? Los últimos ${MAX_RESPALDOS_AUTO} guardados tienen botón <b>↩ Restaurar</b> — devuelve TODOS los datos (empleados, nómina, vacaciones, liquidaciones, configuración) a como estaban justo después de ese guardado. Los guardados más viejos ya no lo tienen, para no ocupar espacio de más — y estas copias completas quedan solo en este computador, no se comparten al sincronizar con su equipo.</div>
@@ -100,21 +111,23 @@ function actualizacionesHTML() {
 }
 
 function nubeHTML() {
+  // Quien no es master no ve ni cambia la URL y el PIN de la nube (son del master).
+  const oculto = !!state.SESION && !esMaster() && syncConfigured();
   return `
   <div class="card">
     <h2>Sincronización en la nube</h2>
-    <div class="desc">Comparte estos mismos datos con tu equipo (por ejemplo tú y el contador), usando tu propio servidor pequeño en Cloudflare. Es manual: nada se sube ni se trae solo — tú decides cuándo con los botones "☁️ Guardar cambios" (arriba) y "Traer cambios del servidor" (aquí abajo). Cada persona configura esto una sola vez en su computador, con la misma URL y el mismo PIN.</div>
+    <div class="desc">Comparte estos mismos datos con tu equipo (por ejemplo tú y el contador), usando tu propio servidor pequeño en Cloudflare. Es automática: los cambios se suben solos unos segundos después de hacerlos y se traen los de los demás cada poco. Si dos personas cambian cosas distintas, ambos cambios se combinan; el indicador de la nube (arriba) y "Sincronizar ahora" (aquí abajo) sirven para forzarla. Cada persona configura esto una sola vez en su computador, con la misma URL y el mismo PIN.</div>
     <div class="grid cols-3">
-      <div class="field"><label>URL del servidor (Worker)</label><input type="text" id="syncUrl" value="${state.SYNC.url}" placeholder="https://tu-worker.workers.dev"></div>
-      <div class="field"><label>PIN de acceso</label><input type="password" id="syncPin" value="${state.SYNC.pin}" placeholder="PIN compartido con tu equipo"></div>
+      <div class="field"><label>URL del servidor (Worker)</label><input type="text" id="syncUrl" value="${oculto ? '••••••••••••' : state.SYNC.url}" placeholder="https://tu-worker.workers.dev" ${oculto ? 'readonly' : ''}></div>
+      <div class="field"><label>PIN de acceso</label><input type="password" id="syncPin" value="${oculto ? '••••••••' : state.SYNC.pin}" placeholder="PIN compartido con tu equipo" ${oculto ? 'readonly' : ''}></div>
       <div class="field"><label>Tu nombre</label><input type="text" id="syncActor" value="${state.SESION ? actorDeSesion() : state.SYNC.actor}" placeholder="Ej. José" ${state.SESION ? 'readonly' : ''}>${state.SESION ? '<div class="legal">Es su nombre de usuario; así aparece en el historial de cambios y en lo que sube a la nube.</div>' : ''}</div>
     </div>
     <div class="btn-row" style="margin-top:6px;align-items:center;">
-      <button class="btn" id="btnGuardarSync">Guardar configuración</button>
-      ${syncConfigured() ? '<button class="btn ghost" id="btnSincronizarAhora">⬇ Traer cambios del servidor</button><button class="btn ghost" id="btnDesconectarSync">Desconectar</button>' : ''}
+      ${oculto ? '' : '<button class="btn" id="btnGuardarSync">Guardar configuración</button>'}
+      ${syncConfigured() ? `<button class="btn ghost" id="btnSincronizarAhora">⬇ Sincronizar ahora</button>${oculto ? '' : '<button class="btn ghost" id="btnDesconectarSync">Desconectar</button>'}` : ''}
       <span class="legal" id="syncConfigStatus">${syncConfigured() ? (state.SYNC.lastSyncedAt ? 'Última sincronización: ' + fmtDate(state.SYNC.lastSyncedAt.slice(0, 10)) + ' ' + new Date(state.SYNC.lastSyncedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }) + (state.SYNC.lastUpdatedBy ? ' · por ' + state.SYNC.lastUpdatedBy : '') : 'Configurado, aún sin sincronizar.') : 'Sin configurar — cada quien ve solo sus propios datos guardados en este computador.'}</span>
     </div>
-    <div class="note" style="margin-top:12px;">Necesitas desplegar primero un pequeño Worker de Cloudflare (instrucciones aparte). Una vez desplegado, pega aquí su URL y el PIN que hayas elegido.</div>
+    <div class="note" style="margin-top:12px;">${oculto ? 'La conexión con la nube la administra el usuario master: aquí no se muestra ni se cambia la URL ni el PIN.' : 'Necesitas desplegar primero un pequeño Worker de Cloudflare (instrucciones aparte). Una vez desplegado, pega aquí su URL y el PIN que hayas elegido.'}</div>
   </div>`;
 }
 
@@ -299,6 +312,17 @@ function wire(root, rerender) {
     window.api.updater.install();
   });
 
+  /* Respaldo de datos */
+  const btnExport = root.querySelector('#btnExport');
+  if (btnExport) btnExport.addEventListener('click', exportBackup);
+  const btnImport = root.querySelector('#btnImport');
+  if (btnImport) btnImport.addEventListener('click', () => importBackup(rerender));
+  const btnOpenDataDir = root.querySelector('#btnOpenDataDir');
+  if (btnOpenDataDir) btnOpenDataDir.addEventListener('click', async () => {
+    const dir = await window.api.store.dataDir();
+    await window.api.shell.openPath(dir);
+  });
+
   /* Sincronización */
   const btnGuardarSync = root.querySelector('#btnGuardarSync');
   if (btnGuardarSync) btnGuardarSync.addEventListener('click', async () => {
@@ -319,12 +343,13 @@ function wire(root, rerender) {
     rerender();
   });
   const btnSincronizarAhora = root.querySelector('#btnSincronizarAhora');
-  if (btnSincronizarAhora) btnSincronizarAhora.addEventListener('click', async () => { await syncPull(false, updateSyncLabel); rerender(); });
+  if (btnSincronizarAhora) btnSincronizarAhora.addEventListener('click', async () => { await sincronizarManual(); updateSyncLabel(); rerender(); });
   const btnDesconectarSync = root.querySelector('#btnDesconectarSync');
   if (btnDesconectarSync) btnDesconectarSync.addEventListener('click', async () => {
     const ok = await confirmDialog({ title: 'Desconectar sincronización', message: '¿Desconectar la sincronización en este computador? Sus datos locales no se borran, solo dejan de compartirse.', confirmLabel: 'Desconectar', danger: true });
     if (!ok) return;
     state.SYNC = { url: '', pin: '', actor: '', lastSyncedAt: null, lastUpdatedBy: null, status: 'sin-configurar' };
+    state.SYNC_BASE = null;
     await persistAll();
     updateSyncLabel();
     rerender();
