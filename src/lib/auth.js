@@ -17,8 +17,8 @@ export const MODULOS_SISTEMA = [
   { id: 'vacaciones', label: 'Vacaciones' },
   { id: 'prestaciones', label: 'Prestaciones sociales' },
   { id: 'liquidacion', label: 'Liquidación' },
-  { id: 'paralela', label: 'Nómina paralela' },
-  { id: 'config', label: 'Configuración (tasas, nube, parámetros, historial)' }
+  { id: 'paralela', label: 'Nómina paralela', detalle: 'Confidencial' },
+  { id: 'config', label: 'Configuración', detalle: 'Tasas, nube, parámetros, historial' }
 ];
 
 export const ROL_MASTER = 'master';

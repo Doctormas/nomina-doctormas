@@ -131,6 +131,8 @@ export const state = {
   ROLES: [],
   // Usuario con sesión iniciada — solo en memoria, se pide al abrir la app.
   SESION: null,
+  // "Recordarme en este equipo": { id, marca }. Solo local (nunca se sincroniza).
+  SESION_RECORDADA: null,
   // Correlativo único para el "N° de recibo" de todo recibo de pago que se
   // guarda en el historial (nómina, utilidades, bono vacacional) — nunca se
   // reutiliza ni se reinicia, aunque se borre un registro después.
@@ -199,6 +201,7 @@ export async function loadState() {
   state.RESPALDOS_AUTO = data.RESPALDOS_AUTO || [];
   state.PARALELA = Object.assign({ pinHash: '', salt: '', pagos: [] }, data.PARALELA || {});
   state.PARALELA_CLAVE = data.PARALELA_CLAVE || '';
+  state.SESION_RECORDADA = data.SESION_RECORDADA || null;
   state.USUARIOS = data.USUARIOS || [];
   state.ROLES = (data.ROLES && data.ROLES.length) ? data.ROLES : rolesPorDefecto();
   state.PROXIMO_NUMERO_RECIBO = data.PROXIMO_NUMERO_RECIBO || 1;
@@ -224,7 +227,7 @@ function collectStorageDoc() {
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
-    PARALELA: state.PARALELA, PARALELA_CLAVE: state.PARALELA_CLAVE,
+    PARALELA: state.PARALELA, PARALELA_CLAVE: state.PARALELA_CLAVE, SESION_RECORDADA: state.SESION_RECORDADA,
     USUARIOS: state.USUARIOS, ROLES: state.ROLES,
     PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     TASA: state.TASA, SYNC: state.SYNC, CAMBIOS_SIN_SINCRONIZAR: !!state.CAMBIOS_SIN_SINCRONIZAR,
@@ -257,7 +260,7 @@ function idCorto() {
 function registrarCambio(seccion) {
   const id = idCorto();
   const fecha = new Date().toISOString();
-  const actor = (state.SESION && state.SESION.nombre) || state.SYNC.actor || 'Sin nombre';
+  const actor = actorDeSesion() || state.SYNC.actor || 'Sin nombre';
   state.HISTORIAL_CAMBIOS.unshift({ id, fecha, actor, seccion });
   if (state.HISTORIAL_CAMBIOS.length > MAX_HISTORIAL_CAMBIOS) state.HISTORIAL_CAMBIOS.length = MAX_HISTORIAL_CAMBIOS;
 
@@ -313,6 +316,13 @@ export function tomarNumeroRecibo() {
   return String(n);
 }
 
+/** Cómo se firma lo que hace el usuario con sesión: su nombre de usuario corto
+ * (ej. "Jbaez"), con la inicial en mayúscula. Vacío si no hay sesión. */
+export function actorDeSesion() {
+  const u = state.SESION && state.SESION.usuario;
+  return u ? u.charAt(0).toUpperCase() + u.slice(1) : '';
+}
+
 // Tipos de usuario que se crean la primera vez; el master los puede editar o borrar.
 // (El tipo "master" es fijo y ve todo — no figura en esta lista.)
 export function rolesPorDefecto() {
@@ -333,6 +343,24 @@ export async function persistAll(seccion) {
   // sin subir a la nube, y al abrir la app no se pisan con lo del servidor.
   if (syncConfigured() && !state.APPLYING_REMOTE) marcarCambiosSinSincronizar();
   await window.api.store.save(collectStorageDoc());
+  // Aviso para la sincronización automática: hay algo nuevo que subir.
+  if (state.CAMBIOS_SIN_SINCRONIZAR && typeof alHaberCambiosFn === 'function') alHaberCambiosFn();
+}
+
+let alHaberCambiosFn = null;
+/** La sincronización automática se engancha aquí para enterarse de cada cambio local. */
+export function alHaberCambios(fn) { alHaberCambiosFn = fn; }
+
+/** Deja una copia completa en "Restaurar a un punto anterior" (Configuración → Historial),
+ * por ejemplo antes de sobrescribir algo al resolver un choque de sincronización. */
+export function registrarCopia(seccion, datos) {
+  const id = idCorto();
+  const fecha = new Date().toISOString();
+  const actor = actorDeSesion() || state.SYNC.actor || 'Sin nombre';
+  state.RESPALDOS_AUTO.unshift({ id, fecha, actor, seccion, datos });
+  if (state.RESPALDOS_AUTO.length > MAX_RESPALDOS_AUTO) state.RESPALDOS_AUTO.length = MAX_RESPALDOS_AUTO;
+  state.HISTORIAL_CAMBIOS.unshift({ id, fecha, actor, seccion });
+  if (state.HISTORIAL_CAMBIOS.length > MAX_HISTORIAL_CAMBIOS) state.HISTORIAL_CAMBIOS.length = MAX_HISTORIAL_CAMBIOS;
 }
 
 // Subconjunto que sí se comparte al sincronizar con el equipo (no incluye

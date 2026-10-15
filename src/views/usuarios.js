@@ -52,9 +52,10 @@ export function usuariosHTML() {
     <div class="card" style="margin-bottom:12px;" data-rol="${r.id}">
       <div class="field" style="max-width:320px;"><label>Nombre del tipo</label><input type="text" class="rolNombre" value="${esc(r.nombre)}"></div>
       <div style="margin:10px 0 4px;font-size:.8rem;color:var(--charcoal-muted);">Módulos que puede ver:</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 16px;">
-        ${MODULOS_SISTEMA.map((m) => `<label style="display:flex;gap:8px;align-items:center;font-size:.85rem;">
-          <input type="checkbox" class="rolMod" value="${m.id}" ${r.modulos.includes(m.id) ? 'checked' : ''}> ${esc(m.label)}</label>`).join('')}
+      <div class="perm-grid">
+        ${MODULOS_SISTEMA.map((m) => `<label class="perm-item">
+          <input type="checkbox" class="rolMod" value="${m.id}" ${r.modulos.includes(m.id) ? 'checked' : ''}>
+          <span><b>${esc(m.label)}</b>${m.detalle ? `<small>${esc(m.detalle)}</small>` : ''}</span></label>`).join('')}
       </div>
       <div class="btn-row" style="margin-top:12px;">
         <button class="btn small" data-rol-guardar="${r.id}">Guardar tipo</button>

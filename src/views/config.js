@@ -1,4 +1,4 @@
-import { state, persistAll, registrarTasaHistorica, syncConfigured, restaurarRespaldoAuto, MAX_RESPALDOS_AUTO } from '../state/store.js';
+import { state, actorDeSesion, persistAll, registrarTasaHistorica, syncConfigured, restaurarRespaldoAuto, MAX_RESPALDOS_AUTO } from '../state/store.js';
 import { fetchTasaBCV, fetchTasaPorFecha, importarHistoricoCompleto } from '../lib/tasa.js';
 import { syncConnect, syncPull, syncPush } from '../lib/sync.js';
 import { fmtNum, fmtDate, todayStr, uid } from '../lib/formato.js';
@@ -107,7 +107,7 @@ function nubeHTML() {
     <div class="grid cols-3">
       <div class="field"><label>URL del servidor (Worker)</label><input type="text" id="syncUrl" value="${state.SYNC.url}" placeholder="https://tu-worker.workers.dev"></div>
       <div class="field"><label>PIN de acceso</label><input type="password" id="syncPin" value="${state.SYNC.pin}" placeholder="PIN compartido con tu equipo"></div>
-      <div class="field"><label>Tu nombre</label><input type="text" id="syncActor" value="${state.SYNC.actor}" placeholder="Ej. José"></div>
+      <div class="field"><label>Tu nombre</label><input type="text" id="syncActor" value="${state.SESION ? actorDeSesion() : state.SYNC.actor}" placeholder="Ej. José" ${state.SESION ? 'readonly' : ''}>${state.SESION ? '<div class="legal">Es su nombre de usuario; así aparece en el historial de cambios y en lo que sube a la nube.</div>' : ''}</div>
     </div>
     <div class="btn-row" style="margin-top:6px;align-items:center;">
       <button class="btn" id="btnGuardarSync">Guardar configuración</button>
@@ -304,7 +304,7 @@ function wire(root, rerender) {
   if (btnGuardarSync) btnGuardarSync.addEventListener('click', async () => {
     state.SYNC.url = root.querySelector('#syncUrl').value.trim();
     state.SYNC.pin = root.querySelector('#syncPin').value.trim();
-    state.SYNC.actor = root.querySelector('#syncActor').value.trim();
+    state.SYNC.actor = state.SESION ? actorDeSesion() : root.querySelector('#syncActor').value.trim();
     await persistAll();
     if (!syncConfigured()) { toast('Complete la URL y el PIN.', 'error'); rerender(); return; }
     const status = root.querySelector('#syncConfigStatus');

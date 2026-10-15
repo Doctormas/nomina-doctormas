@@ -31,12 +31,30 @@ function msg(el, texto) {
 /** Resuelve cuando hay una sesión iniciada (state.SESION). */
 export function pedirAcceso() {
   return new Promise((resolve) => {
-    const entrar = (u) => {
+    const entrar = (u, recordar) => {
       state.SESION = { id: u.id, usuario: u.usuario, nombre: u.nombre, rolId: u.rolId };
       intentosFallidos = 0;
+      // "Recordarme": se guarda en este equipo hasta que el usuario toque "Salir".
+      // La marca es el hash de la clave vigente: si el usuario cambia su clave
+      // (o lo desactivan/eliminan), deja de valer.
+      state.SESION_RECORDADA = recordar ? { id: u.id, marca: u.hash } : null;
+      persistAll();
       document.querySelectorAll('.login-overlay').forEach((x) => x.remove());
       resolve();
     };
+
+    // Sesión recordada y vigente: entra directo, sin pedir clave.
+    const r = state.SESION_RECORDADA;
+    if (r) {
+      const u = state.USUARIOS.find((x) => x.id === r.id && x.activo !== false && x.hash === r.marca);
+      if (u) {
+        state.SESION = { id: u.id, usuario: u.usuario, nombre: u.nombre, rolId: u.rolId };
+        resolve();
+        return;
+      }
+    }
+    if (r) { state.SESION_RECORDADA = null; persistAll(); } // ya no vale: se pide la clave
+
     if (!state.USUARIOS.length) crearMaster(entrar);
     else iniciarSesion(entrar);
   });
@@ -137,6 +155,7 @@ function iniciarSesion(entrar) {
     <h2>Iniciar sesión</h2>
     <div class="field"><label>Usuario</label><input type="text" id="lgUsuario" autocomplete="off" autocapitalize="off"></div>
     <div class="field"><label>Clave</label><input type="password" id="lgClave" autocomplete="off"></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.85rem;margin-top:12px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--charcoal);"><input type="checkbox" id="lgRecordar" style="width:auto;"> Recordarme en este equipo</label>
     <div class="login-msg" style="display:none;"></div>
     <button class="btn" id="lgEntrar" style="width:100%;margin-top:12px;">Entrar</button>
     <div style="text-align:center;margin-top:12px;"><a href="#" id="lgOlvido" class="login-link">Olvidé mi clave (master)</a></div>`);
@@ -158,7 +177,7 @@ function iniciarSesion(entrar) {
       return msg(el, 'Usuario o clave incorrectos.');
     }
     if (u.activo === false) return msg(el, 'Este usuario está desactivado. Consulte al master.');
-    entrar(u);
+    entrar(u, q('#lgRecordar').checked);
   };
   q('#lgEntrar').addEventListener('click', ingresar);
   q('#lgClave').addEventListener('keydown', (e) => { if (e.key === 'Enter') ingresar(); });

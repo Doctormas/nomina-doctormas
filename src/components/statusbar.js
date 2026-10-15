@@ -27,7 +27,13 @@ export function updateSyncLabel() {
   if (!el) return;
   if (!syncConfigured()) { el.style.display = 'none'; return; }
   el.style.display = '';
-  const dot = state.SYNC.status === 'ok' ? '🟢' : state.SYNC.status === 'sincronizando' ? '🟡' : state.SYNC.status === 'error' ? '🔴' : '⚪';
+  const st = state.SYNC.status;
+  const dot = st === 'ok' ? '🟢' : st === 'sincronizando' ? '🟡' : st === 'error' ? '🔴' : st === 'conflicto' ? '🟠' : '⚪';
   const cuando = state.SYNC.lastSyncedAt ? new Date(state.SYNC.lastSyncedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }) : '—';
-  el.textContent = `${dot} Compartido · ${cuando}${state.SYNC.lastUpdatedBy ? ' · ' + state.SYNC.lastUpdatedBy : ''}`;
+  let texto = `Compartido · ${cuando}${state.SYNC.lastUpdatedBy ? ' · ' + state.SYNC.lastUpdatedBy : ''}`;
+  if (st === 'sincronizando') texto = 'Sincronizando…';
+  else if (st === 'conflicto' || state.SYNC.conflicto) texto = 'Cambios en conflicto — pulse Guardar para resolver';
+  else if (st === 'error') texto = 'Sin conexión — se reintenta solo';
+  else if (state.CAMBIOS_SIN_SINCRONIZAR) texto = 'Guardando en la nube…';
+  el.textContent = `${dot} ${texto}`;
 }

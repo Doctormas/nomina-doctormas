@@ -1,6 +1,6 @@
 // Sincronización en la nube con el Worker propio de Cloudflare del equipo —
 // misma API y mismo protocolo (X-Access-Pin) del archivo original.
-import { state, syncConfigured, collectFullState, applyFullState, persistAll } from '../state/store.js';
+import { state, syncConfigured, collectFullState, applyFullState, persistAll, actorDeSesion } from '../state/store.js';
 import { cifrarParalela, descifrarParalela, combinarParalela } from './paralelaCrypto.js';
 
 // Guardar el estado local como consecuencia de sincronizar no cuenta como
@@ -37,19 +37,27 @@ async function paralelaParaSubir() {
   return cifrarParalela(state.PARALELA, state.PARALELA_CLAVE);
 }
 
+/**
+ * Sube el estado a la nube. Si se conoce la revisión con la que se trabajó
+ * (state.SYNC.revision) se envía como baseRevision: si otro equipo guardó antes,
+ * el servidor responde 409 y NO se pisa nada — se devuelve { conflicto, remoto }.
+ */
 export async function syncPush(onStatus) {
-  if (!syncConfigured()) return;
+  if (!syncConfigured()) return { omitido: true };
   state.SYNC.status = 'sincronizando';
   if (onStatus) onStatus();
+  let resultado = { ok: false };
   try {
     // Primero se arma todo (incluye traer y combinar la paralela cifrada)...
+    const base = Number.isInteger(state.SYNC.revision) ? state.SYNC.revision : undefined;
     const cuerpo = JSON.stringify({
       data: Object.assign(collectFullState(), { PARALELA_CIFRADA: await paralelaParaSubir() }),
-      updatedBy: (state.SESION && state.SESION.nombre) || state.SYNC.actor || 'Sin nombre'
+      updatedBy: actorDeSesion() || state.SYNC.actor || 'Sin nombre',
+      baseRevision: base
     });
     // ...y recién después corre el reloj del envío.
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const res = await fetch(syncEndpoint(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Access-Pin': state.SYNC.pin },
@@ -57,21 +65,48 @@ export async function syncPush(onStatus) {
       signal: controller.signal
     });
     clearTimeout(timeout);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const j = await res.json();
-    state.SYNC.lastSyncedAt = j.updatedAt || new Date().toISOString();
-    state.SYNC.lastUpdatedBy = state.SYNC.actor || 'Sin nombre';
-    state.SYNC.status = 'ok';
-    state.CAMBIOS_SIN_SINCRONIZAR = false;
+    if (res.status === 409) {
+      const remoto = await res.json();
+      state.SYNC.status = 'conflicto';
+      resultado = { ok: false, conflicto: true, remoto };
+    } else {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      state.SYNC.lastSyncedAt = j.updatedAt || new Date().toISOString();
+      state.SYNC.lastUpdatedBy = actorDeSesion() || state.SYNC.actor || 'Sin nombre';
+      if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
+      state.SYNC.status = 'ok';
+      state.CAMBIOS_SIN_SINCRONIZAR = false;
+      resultado = { ok: true };
+    }
   } catch (err) {
     state.SYNC.status = 'error';
+    resultado = { ok: false, error: err.message };
   }
   await persistSinMarcar();
   if (onStatus) onStatus();
+  return resultado;
+}
+
+/** Revisión vigente en la nube (consulta liviana, sin bajar el documento). null si no se pudo. */
+export async function revisionEnNube() {
+  if (!syncConfigured()) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/revision', { headers: { 'X-Access-Pin': state.SYNC.pin }, signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return Number.isInteger(j.revision) ? j : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 export async function syncPull(silent, onStatus) {
-  if (!syncConfigured()) return;
+  if (!syncConfigured()) return { aplicado: false };
+  let aplicado = false;
   if (!silent) { state.SYNC.status = 'sincronizando'; if (onStatus) onStatus(); }
   try {
     const controller = new AbortController();
@@ -84,7 +119,11 @@ export async function syncPull(silent, onStatus) {
       await applyFullState(j.data);
       state.SYNC.lastSyncedAt = j.updatedAt;
       state.SYNC.lastUpdatedBy = j.updatedBy;
+      if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
       state.CAMBIOS_SIN_SINCRONIZAR = false;
+      aplicado = true;
+    } else if (j && Number.isInteger(j.revision)) {
+      state.SYNC.revision = j.revision;
     }
     state.SYNC.status = 'ok';
   } catch (err) {
@@ -92,6 +131,7 @@ export async function syncPull(silent, onStatus) {
   }
   await persistSinMarcar();
   if (onStatus) onStatus();
+  return { aplicado };
 }
 
 /** Conectar por primera vez: trae lo del servidor si ya hay algo, o sube lo local si el servidor está vacío. */
@@ -106,6 +146,7 @@ export async function syncConnect() {
     await applyFullState(j.data);
     state.SYNC.lastSyncedAt = j.updatedAt;
     state.SYNC.lastUpdatedBy = j.updatedBy;
+    if (Number.isInteger(j.revision)) state.SYNC.revision = j.revision;
   } else {
     await syncPush();
   }

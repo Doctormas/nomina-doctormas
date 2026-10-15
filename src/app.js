@@ -1,7 +1,9 @@
-import { state, loadState, syncConfigured, persistAll } from './state/store.js';
+import { state, loadState, syncConfigured, persistAll, actorDeSesion } from './state/store.js';
 import { fetchTasaBCV, importarHistoricoCompleto } from './lib/tasa.js';
 import { todayStr } from './lib/formato.js';
 import { syncPull, syncPush } from './lib/sync.js';
+import { iniciarAutoSync, resolverConflicto } from './lib/autoSync.js';
+import { confirmDialog } from './components/confirm.js';
 import { ICONS } from './components/icons.js';
 import { toast } from './components/toast.js';
 import { exportBackup, importBackup } from './lib/backup.js';
@@ -51,6 +53,8 @@ function sesionVigente() {
   if (!u || u.activo === false) return false;
   // El master pudo cambiar su nombre o tipo: se refresca en vivo.
   state.SESION = { id: u.id, usuario: u.usuario, nombre: u.nombre, rolId: u.rolId };
+  // El nombre que firma los cambios y la sincronización es el del usuario con sesión.
+  if (state.SYNC && state.SYNC.actor !== actorDeSesion()) state.SYNC.actor = actorDeSesion();
   return true;
 }
 
@@ -145,6 +149,14 @@ function wireSidebarToggle() {
   applySidebarCollapsed();
 }
 
+// Las pantallas piden ir a otro módulo con un evento (ej. tocar una alerta del Resumen).
+window.addEventListener('nomina-ir', (ev) => {
+  const destino = ev.detail;
+  if (!puedeVer(destino)) return;
+  ACTIVE_TAB = destino;
+  render();
+});
+
 /* ---------- Menú tipo cajón (teléfono) ---------- */
 function wireMenuMovil() {
   const shell = document.getElementById('appShell');
@@ -179,6 +191,8 @@ function renderSidebar() {
     box.innerHTML = `<span class="su-name" title="${state.SESION.nombre} · ${nombreDeRol(state.SESION.rolId)}">${state.SESION.nombre}<br><span style="opacity:.65;">${nombreDeRol(state.SESION.rolId)}</span></span><button id="btnCerrarSesion" title="Cerrar sesión">Salir</button>`;
     box.querySelector('#btnCerrarSesion').addEventListener('click', () => {
       state.SESION = null;
+      state.SESION_RECORDADA = null; // al salir se olvida "Recordarme"
+      persistAll();
       render();
     });
   }
@@ -250,11 +264,21 @@ async function boot() {
   });
 
   document.getElementById('btnGuardarNube').addEventListener('click', async () => {
-    await syncPush(updateSyncLabel);
+    const r = await syncPush(updateSyncLabel);
+    if (r && r.conflicto) { await resolverConflicto(r.remoto); return; }
     toast(state.SYNC.status === 'ok' ? 'Cambios guardados en la nube.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
   });
 
   document.getElementById('btnCargarNube').addEventListener('click', async () => {
+    if (state.CAMBIOS_SIN_SINCRONIZAR) {
+      const ok = await confirmDialog({
+        title: 'Tiene cambios sin guardar',
+        message: 'Traer lo de la nube <b>descarta</b> los cambios que aún no se han subido. ¿Continuar?',
+        confirmLabel: 'Traer de la nube', danger: true
+      });
+      if (!ok) return;
+    }
+    state.SYNC.conflicto = null;
     await syncPull(false, updateSyncLabel);
     toast(state.SYNC.status === 'ok' ? 'Cambios traídos del servidor.' : 'No se pudo sincronizar. Verifique su conexión.', state.SYNC.status === 'ok' ? 'success' : 'error');
     render();
@@ -289,12 +313,15 @@ async function boot() {
   actualizarHistoricoTasaAuto();
   setInterval(actualizarHistoricoTasaAuto, 6 * 60 * 60 * 1000); // por si la app queda abierta y cruza de día
 
+  iniciarAutoSync({ alActualizar: () => { updateSyncLabel(); render(); } });
+
   if (syncConfigured()) {
     // Si quedaron cambios locales sin subir a la nube (de la sesión anterior),
     // NO se trae lo del servidor: pisaría esos cambios. El botón "Guardar"
     // queda pendiente y usted decide cuándo subirlos.
     if (state.CAMBIOS_SIN_SINCRONIZAR) {
-      toast('Hay cambios de la sesión anterior sin guardar en la nube. Pulse "Guardar" para subirlos.', 'info', 8000);
+      // Quedaron cambios de la sesión anterior: no se trae lo de la nube (los
+      // pisaría); la sincronización automática los sube en unos segundos.
       updateSyncLabel();
     } else {
       syncPull(true, updateSyncLabel).then(() => render());
