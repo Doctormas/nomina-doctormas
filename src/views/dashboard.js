@@ -5,7 +5,7 @@ import { salarioVigente, estadoVacaciones, cestaticketEmp } from '../lib/calculo
 import { fmt } from '../lib/moneda.js';
 import { todayStr, parseDate, fmtDate, fmtNum } from '../lib/formato.js';
 import { calcularNotificaciones } from '../lib/notificaciones.js';
-import { pagosAlrededor, fechaPagoQuincena, MESES } from '../lib/calendarioPagos.js';
+import { pagosAlrededor, fechaPagoQuincena, feriadosDelAno, MESES } from '../lib/calendarioPagos.js';
 import { puedeVer } from '../lib/auth.js';
 import { estadoDe } from './empleados.js';
 
@@ -53,7 +53,7 @@ function costoPorMes(cuantosMeses) {
     const i = idx.get(p.fecha.slice(0, 7));
     if (i === undefined) return;
     const r = p.resultado || {};
-    meses[i].sueldo += aUSD(r.salarioNormalPeriodo || 0, p.fecha);
+    meses[i].sueldo += aUSD((r.salarioNormalPeriodo || 0) + (r.pagoFeriados || 0), p.fecha);
     meses[i].bono += aUSD(r.cestaticketPeriodo || 0, p.fecha);
   });
   state.BONO_ALIM_PAGADO.forEach((b) => {
@@ -85,6 +85,14 @@ function graficoCostoHTML(meses) {
 function proximasFechasEquipo(activos, hoyISO) {
   const hoy = parseDate(hoyISO);
   const items = [];
+  // Feriados y días no laborables de los próximos 45 días.
+  [hoy.getFullYear(), hoy.getFullYear() + 1].forEach((y) => {
+    Object.entries(feriadosDelAno(y)).forEach(([fecha, nombre]) => {
+      const f = parseDate(fecha);
+      const dias = Math.round((f - hoy) / 86400000);
+      if (dias >= 0 && dias <= 45) items.push({ tipo: 'feriado', nombre, fecha: f, dias });
+    });
+  });
   const proxima = (mmdd) => {
     const [m, d] = mmdd;
     let f = new Date(hoy.getFullYear(), m - 1, d);
@@ -104,7 +112,7 @@ function proximasFechasEquipo(activos, hoyISO) {
       if (anos >= 1) items.push({ tipo: 'aniv', nombre: e.nombre, fecha: f, anos, dias: Math.round((f - hoy) / 86400000) });
     }
   });
-  return items.filter((i) => i.dias <= 45).sort((a, b) => a.dias - b.dias).slice(0, 6);
+  return items.filter((i) => i.dias <= 45).sort((a, b) => a.dias - b.dias).slice(0, 7);
 }
 
 function porDepartamento(activos) {
@@ -202,8 +210,8 @@ export function render(root, rerender) {
 
   const fechasHTML = fechasEquipo.length
     ? fechasEquipo.map((f) => `<div class="dash-fila">
-        <span class="dash-ico">${f.tipo === 'cumple' ? '🎂' : '⭐'}</span>
-        <div class="dash-fila-info"><div>${esc(f.nombre)}</div><small>${f.tipo === 'cumple' ? 'Cumpleaños' : `${f.anos} año${f.anos === 1 ? '' : 's'} en la empresa`} · ${f.fecha.getDate()} de ${MESES[f.fecha.getMonth()]}</small></div>
+        <span class="dash-ico">${f.tipo === 'cumple' ? '🎂' : f.tipo === 'feriado' ? '📅' : '⭐'}</span>
+        <div class="dash-fila-info"><div>${esc(f.nombre)}</div><small>${f.tipo === 'cumple' ? 'Cumpleaños' : f.tipo === 'feriado' ? 'Feriado / no laborable' : `${f.anos} año${f.anos === 1 ? '' : 's'} en la empresa`} · ${f.fecha.getDate()} de ${MESES[f.fecha.getMonth()]}</small></div>
         <span class="dash-cuando">${textoDias(f.dias)}</span>
       </div>`).join('')
     : '<div class="dash-vacio">Sin fechas especiales en los próximos 45 días.</div>';
@@ -269,7 +277,7 @@ export function render(root, rerender) {
       <div class="dash-card-h"><h3>Calendario de pagos</h3></div>
       <div class="dash-pagos">${pagosHTML}</div>
       ${utilidadesHTML}
-      <div class="dash-nota">Se paga el 15 y fin de mes; si cae fin de semana o feriado, el día hábil anterior.${ultima ? ` Última nómina guardada: <b>${fmtDate(ultima.fecha)}</b>.` : ''}</div>
+      <div class="dash-nota">Se paga el 15 y fin de mes; si cae fin de semana o feriado (Configuración → Calendario), el día hábil anterior.${ultima ? ` Última nómina guardada: <b>${fmtDate(ultima.fecha)}</b>.` : ''}</div>
     </div>` : ''}
   </div>
 
@@ -286,7 +294,7 @@ export function render(root, rerender) {
 
   <div class="dash-cols">
     <div class="card dash-card">
-      <div class="dash-card-h"><h3>Próximas fechas</h3><small>cumpleaños y aniversarios</small></div>
+      <div class="dash-card-h"><h3>Próximas fechas</h3><small>feriados, cumpleaños y aniversarios</small></div>
       ${fechasHTML}
     </div>
     <div class="card dash-card">

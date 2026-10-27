@@ -150,7 +150,7 @@ export function construirInformeNominaMensualHTML(mesISO) {
       porEmp.set(p.empId, { emp: state.EMPLEADOS.find((e) => e.id === p.empId), dias: 0, salario: 0, bono: 0, devengado: 0, ivss: 0, rpe: 0, faov: 0, islr: 0, ded: 0, neto: 0, patr: 0, ingreso: false, egreso: false, recibos: 0 });
     }
     const f = porEmp.get(p.empId);
-    f.dias += r.diasPeriodo || 0; f.salario += r.salarioNormalPeriodo || 0; f.bono += r.cestaticketPeriodo || 0;
+    f.dias += r.diasPeriodo || 0; f.salario += (r.salarioNormalPeriodo || 0) + (r.pagoFeriados || 0); f.bono += r.cestaticketPeriodo || 0;
     f.devengado += r.totalDevengado || 0; f.ivss += r.ivssTrab || 0; f.rpe += r.rpeTrab || 0; f.faov += r.faovTrab || 0; f.islr += r.islrTrab || 0;
     f.ded += r.totalDeducciones || 0; f.neto += r.neto || 0; f.patr += r.aportesPatronales || 0; f.recibos += 1;
     if (r.periodoParcial) { if (r.periodoParcialPorEgreso) f.egreso = true; else f.ingreso = true; }
@@ -245,7 +245,7 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
 
   state.PERIODOS.filter((p) => delAno(p.fecha)).forEach((p) => {
     const i = mesIdx(p.fecha); const r = p.resultado; const f = p.fecha;
-    const sueldo = aUSD(r.salarioNormalPeriodo, f); const bono = aUSD(r.cestaticketPeriodo, f);
+    const sueldo = aUSD(r.salarioNormalPeriodo + (r.pagoFeriados || 0), f); const bono = aUSD(r.cestaticketPeriodo, f);
     filas.sueldo[i] += sueldo; filas.bonoAlim[i] += bono;
     filas.ivss[i] += aUSD(r.ivssTrab, f); filas.rpe[i] += aUSD(r.rpeTrab, f);
     filas.faov[i] += aUSD(r.faovTrab, f); filas.islr[i] += aUSD(r.islrTrab, f);
@@ -381,7 +381,7 @@ function totalesPorConceptoMesHTML(mesISO, n, u) {
   const bonoAparte = state.BONO_ALIM_PAGADO.filter((b) => b.fecha.slice(0, 7) === mesISO).reduce((a, b) => a + b.monto, 0);
   const suma = (rs, fn) => rs.reduce((a, r) => a + (fn(r) || 0), 0);
   const filas = [
-    ['Conceptos salariales (sueldo del período)', (r) => r.salarioNormalPeriodo, false],
+    ['Conceptos salariales (sueldo y feriados trabajados)', (r) => r.salarioNormalPeriodo + (r.pagoFeriados || 0), false],
     ['Conceptos no salariales (bono de alimentación)', (r) => r.cestaticketPeriodo, false],
     ['TOTAL DEVENGADO', (r) => r.totalDevengado, true],
     ['(−) IVSS trabajador', (r) => r.ivssTrab, false],
@@ -702,7 +702,7 @@ export function generarInformeARC(ano) {
     const emp = state.EMPLEADOS.find((e) => e.id === p.empId);
     if (!emp) return;
     const acc = porEmpleado.get(p.empId) || { emp, remuneracion: 0, islr: 0 };
-    acc.remuneracion += p.resultado.salarioNormalPeriodo;
+    acc.remuneracion += p.resultado.salarioNormalPeriodo + (p.resultado.pagoFeriados || 0);
     acc.islr += p.resultado.islrTrab || 0;
     porEmpleado.set(p.empId, acc);
   });

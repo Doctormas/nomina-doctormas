@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('api', {
     export: (datos, defaultFilename) => ipcRenderer.invoke('contrato:export', { datos, defaultFilename })
   },
   xlsx: {
-    parseFile: (arrayBuffer) => ipcRenderer.invoke('xlsx:parseFile', arrayBuffer),
+    parseFile: (arrayBuffer, hoja) => ipcRenderer.invoke('xlsx:parseFile', arrayBuffer, hoja),
     downloadTemplate: (payload) => ipcRenderer.invoke('xlsx:downloadTemplate', payload),
     downloadSheet: (payload) => ipcRenderer.invoke('xlsx:downloadSheet', payload)
   },

@@ -7,7 +7,8 @@ export function backupPayload() {
     CONFIG: state.CONFIG, EMPLEADOS: state.EMPLEADOS, PERIODOS: state.PERIODOS,
     VAC_DISFRUTE: state.VAC_DISFRUTE, UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
-    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO
+    BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
+    FERIADOS_TRABAJADOS: state.FERIADOS_TRABAJADOS
   }, null, 2);
 }
 
@@ -33,6 +34,8 @@ export async function importBackup(onDone) {
     state.UTILIDADES_PAGADAS = data.UTILIDADES_PAGADAS || [];
     state.LIQUIDACIONES = data.LIQUIDACIONES || [];
     state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
+    if (Array.isArray(data.BONO_ALIM_PAGADO)) state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO;
+    if (Array.isArray(data.FERIADOS_TRABAJADOS)) state.FERIADOS_TRABAJADOS = data.FERIADOS_TRABAJADOS;
     state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
     await persistAll('Respaldo restaurado desde archivo');
     toast('Respaldo importado correctamente.', 'success');

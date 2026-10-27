@@ -192,10 +192,12 @@ ipcMain.handle('contrato:export', async (evt, { datos, defaultFilename }) => {
 });
 
 /* ---------- IPC: Excel (carga masiva de empleados) ---------- */
-ipcMain.handle('xlsx:parseFile', (evt, arrayBuffer) => {
+ipcMain.handle('xlsx:parseFile', (evt, arrayBuffer, hoja) => {
   const buf = Buffer.from(arrayBuffer);
   const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
+  // Sin nombre: la primera hoja. Con nombre: esa hoja (o vacío si no existe).
+  const ws = hoja ? wb.Sheets[wb.SheetNames.find((n) => n.trim().toLowerCase() === String(hoja).trim().toLowerCase())] : wb.Sheets[wb.SheetNames[0]];
+  if (!ws) return [];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
   // Las celdas de fecha llegan como Date; se normalizan a AAAA-MM-DD aquí para
   // que el renderer no necesite entender el formato binario de Excel.

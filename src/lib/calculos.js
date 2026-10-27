@@ -306,6 +306,28 @@ function diasEnVentana(emp, desdeISO, hastaISO, diasCompleto) {
 }
 
 /* ---------- Nómina (período) ---------- */
+/**
+ * Trabajo en día feriado, no laborable decretado o de descanso (Art. 119-120
+ * LOTTT). Cada día registrado se paga ADEMÁS del sueldo mensual (que ya cubre
+ * los días de descanso y feriados) con su salario normal del día más el recargo
+ * configurado (50% por defecto): factor 1,5 sobre el salario diario. Es salarial.
+ */
+export function factorFeriadoTrabajado() {
+  const c = state.CONFIG;
+  const pct = c.feriadoTrabajadoRecargoPct === undefined || c.feriadoTrabajadoRecargoPct === null || c.feriadoTrabajadoRecargoPct === ''
+    ? 50 : Number(c.feriadoTrabajadoRecargoPct);
+  return (c.feriadoTrabajadoPagaDia === false ? 0 : 1) + pct / 100;
+}
+
+export function calcularFeriadosTrabajados(emp, desdeISO, hastaISO) {
+  const regs = (state.FERIADOS_TRABAJADOS || []).filter((r) => r.empId === emp.id && r.fecha >= desdeISO && r.fecha <= hastaISO);
+  const factor = factorFeriadoTrabajado();
+  const detalle = regs
+    .slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    .map((r) => ({ id: r.id, fecha: r.fecha, tipo: r.tipo, monto: (salarioVigente(emp, r.fecha) / 30) * factor }));
+  return { dias: detalle.length, monto: detalle.reduce((a, d) => a + d.monto, 0), detalle, factor };
+}
+
 export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const cfg = tipoNominaCfg(tipoKey);
   const salarioMensual = salarioVigente(emp, fechaPeriodoISO);
@@ -336,6 +358,10 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const diasPeriodo = diasEnVentana(emp, periodoDesdeCalc, periodoHastaCalc, diasConfigurados);
 
   const salarioNormalPeriodo = salarioDiario * diasPeriodo;
+  // Feriados / descansos trabajados dentro del período: salarial, se suma al devengado
+  // y a la base de las deducciones.
+  const feriadosTrab = calcularFeriadosTrabajados(emp, periodoDesdeCalc, periodoHastaCalc);
+  const pagoFeriados = feriadosTrab.monto;
 
   const ant = antiguedad(emp.fechaIngreso, fechaPeriodoISO);
   const si = salarioIntegralDiario(salarioMensual, ant.anoServicioActual, diasUtilidadesEmp(emp));
@@ -351,7 +377,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   let baseIVSSCalc = 0, baseRPECalc = 0, baseFAOVCalc = 0, baseINCESCalc = 0;
   if (cfg.incluyeDeducciones) {
     const diasMes = diasPeriodo;
-    const salarioMesBase = salarioNormalPeriodo;
+    const salarioMesBase = salarioNormalPeriodo + pagoFeriados;
 
     const fraccionMes = diasMes / 30;
     // Tope IVSS: 5 salarios mínimos (Art. 59 Ley del Seguro Social).
@@ -410,7 +436,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   }
 
   const totalDeducciones = ivssTrab + rpeTrab + faovTrab + islrTrab;
-  const totalDevengado = salarioNormalPeriodo + cestaticketPeriodo;
+  const totalDevengado = salarioNormalPeriodo + pagoFeriados + cestaticketPeriodo;
   const neto = totalDevengado - totalDeducciones;
 
   const tasaBCV = tasaEnFecha(fechaPeriodoISO);
@@ -419,6 +445,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
 
   return {
     salarioMensual, salarioDiario, salarioNormalPeriodo, cestaticketPeriodo, diasPeriodo,
+    pagoFeriados, diasFeriadosTrab: feriadosTrab.dias, detalleFeriados: feriadosTrab.detalle,
     bonoAlimPagadoAparte, diasBonoMes,
     salarioIntegralDiario: si.integral, alicuotaUtilDiaria: si.alicuotaUtil, alicuotaBonoDiaria: si.alicuotaBono,
     baseIVSS: baseIVSSCalc, baseRPE: baseRPECalc, baseFAOV: baseFAOVCalc, baseINCES: baseINCESCalc,
@@ -463,7 +490,7 @@ export function calcularDPPMes(mesISO, corridaExtra) {
   const filas = Array.from(empleadosIds).map((empId) => {
     const emp = state.EMPLEADOS.find((e) => e.id === empId);
     const periodosDelMes = periodos.filter((p) => p.empId === empId && p.fecha.slice(0, 7) === mesISO);
-    const salario = periodosDelMes.reduce((a, p) => a + p.resultado.salarioNormalPeriodo, 0);
+    const salario = periodosDelMes.reduce((a, p) => a + p.resultado.salarioNormalPeriodo + (p.resultado.pagoFeriados || 0), 0);
     const bonoEnNomina = periodosDelMes.reduce((a, p) => a + (p.resultado.cestaticketPeriodo || 0), 0);
     const bonoAparte = state.BONO_ALIM_PAGADO.filter((b) => b.empId === empId && b.fecha.slice(0, 7) === mesISO)
       .reduce((a, b) => a + b.monto, 0);
@@ -514,7 +541,7 @@ export function calcularParafiscalesPeriodo(desdeISO, hastaISO) {
     return {
       emp, recibos: ps.length,
       dias,
-      salario: S((r) => r.salarioNormalPeriodo), bono: S((r) => r.cestaticketPeriodo),
+      salario: S((r) => r.salarioNormalPeriodo + (r.pagoFeriados || 0)), bono: S((r) => r.cestaticketPeriodo),
       inscrito: emp.inscritoIVSS !== false, declaradoIVSS: ps.some((r) => r.ivssBaseDeclarada),
       baseIVSS: S((r) => baseDe(r.baseIVSS, r.ivssTrab, C.ivssTrabajador)),
       baseRPE: S((r) => baseDe(r.baseRPE, r.rpeTrab, C.rpeTrabajador)),
@@ -522,11 +549,11 @@ export function calcularParafiscalesPeriodo(desdeISO, hastaISO) {
       // INCES patronal: es costo de la empresa (no se descuenta al trabajador), así que
       // se calcula siempre sobre lo realmente devengado en el período — no sobre la
       // base que haya guardado un recibo viejo (mensual y a la tasa de otra quincena).
-      baseINCES: S((r) => r.salarioNormalPeriodo),
+      baseINCES: S((r) => r.salarioNormalPeriodo + (r.pagoFeriados || 0)),
       ivssT: S((r) => r.ivssTrab), ivssP: S((r) => r.ivssPatrono),
       rpeT: S((r) => r.rpeTrab), rpeP: S((r) => r.rpePatrono),
       faovT: S((r) => r.faovTrab), faovP: S((r) => r.faovPatrono),
-      incesP: S((r) => r.salarioNormalPeriodo) * (C.incesPatrono / 100), islr: S((r) => r.islrTrab)
+      incesP: S((r) => r.salarioNormalPeriodo + (r.pagoFeriados || 0)) * (C.incesPatrono / 100), islr: S((r) => r.islrTrab)
     };
   }).filter(Boolean).sort((a, b) => a.emp.nombre.localeCompare(b.emp.nombre));
 

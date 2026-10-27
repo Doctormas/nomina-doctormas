@@ -6,11 +6,14 @@ import { construirInformeNominaHTML, construirInformeNominaMensualHTML, construi
 import { fmt } from '../lib/moneda.js';
 import { fmtDate, todayStr, uid } from '../lib/formato.js';
 import { resultadoConAcciones } from '../components/resultado.js';
+import { fechaPagoQuincena } from '../lib/calendarioPagos.js';
 import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
+import { feriadosTrabajadosHTML, wireFeriadosTrabajados } from './feriadosTrabajados.js';
 
 const MODULOS = [
   { id: 'corridas', label: 'Corridas' },
+  { id: 'feriados', label: 'Feriados trabajados' },
   { id: 'informes', label: 'Informes' }
 ];
 let MODULO_ACTIVO = 'corridas';
@@ -70,7 +73,7 @@ function filasConBonoIncluido(filas) {
 // solo se aplican a lo salarial, así que el monto de esta transferencia es
 // el salario del período menos esas deducciones, nunca el neto con bono.
 async function descargarCsvBancoNomina(fecha, tipo, filas) {
-  const csv = nominaBancoCSV(filas, (f) => f.r.salarioNormalPeriodo - f.r.totalDeducciones);
+  const csv = nominaBancoCSV(filas, (f) => f.r.salarioNormalPeriodo + (f.r.pagoFeriados || 0) - f.r.totalDeducciones);
   const res = await window.api.file.saveAs(csv, `Doctormas_Nomina_${tipo}_${fecha}.csv`, 'CSV', ['csv']);
   if (!res.canceled) toast('CSV guardado: ' + res.filePath, 'success');
 }
@@ -102,7 +105,7 @@ export function render(root, rerender) {
   const pillsHtml = MODULOS.map((m) => `<button data-modulo="${m.id}" class="${MODULO_ACTIVO === m.id ? 'active' : ''}">${m.label}</button>`).join('');
   root.innerHTML = `
   <div class="pill-toggle" id="nomPillToggle" style="margin-bottom:18px;">${pillsHtml}</div>
-  <div id="nomModuloArea">${MODULO_ACTIVO === 'corridas' ? corridasHTML() : informesHTML()}</div>`;
+  <div id="nomModuloArea">${MODULO_ACTIVO === 'corridas' ? corridasHTML() : MODULO_ACTIVO === 'feriados' ? feriadosTrabajadosHTML() : informesHTML()}</div>`;
 
   root.querySelector('#nomPillToggle').querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', () => {
@@ -112,6 +115,7 @@ export function render(root, rerender) {
   });
 
   wire(root, rerender);
+  if (MODULO_ACTIVO === 'feriados') wireFeriadosTrabajados(root, () => render(root, rerender));
 }
 
 function corridasHTML() {
@@ -152,7 +156,9 @@ function corridasHTML() {
     <div class="grid cols-4">
       <div class="field"><label>Tipo de nómina</label><select id="corridaTipo">${tipoOptions}</select></div>
       <div class="field"><label>Departamento</label><select id="corridaDepto">${deptOptions}</select></div>
-      <div class="field"><label>Fecha de corte</label><input type="date" id="corridaFecha" value="${todayStr()}"></div>
+      <div class="field"><label>Fecha de corte</label><input type="date" id="corridaFecha" value="${todayStr()}">
+        <div class="legal" id="corridaFechaSugerida" style="margin-top:4px;"></div>
+      </div>
       <div class="field" style="align-self:end;"><button class="btn" id="btnGenerarCorrida">Generar corrida</button></div>
     </div>
     <div class="legal" style="margin-top:6px;">${activosCount} empleados activos en total.</div>
@@ -208,6 +214,25 @@ function informesHTML() {
 function wire(root, rerender) {
   const selHistAno = root.querySelector('#histAno');
   if (selHistAno) selHistAno.addEventListener('change', () => { HIST_ANO = selHistAno.value; rerender(); });
+
+  // Sugerencia de la fecha de pago según el calendario (feriados y fines de semana).
+  const selTipo = root.querySelector('#corridaTipo');
+  const inpFecha = root.querySelector('#corridaFecha');
+  const hintFecha = root.querySelector('#corridaFechaSugerida');
+  const actualizarSugerencia = () => {
+    if (!selTipo || !inpFecha || !hintFecha) return;
+    const base = inpFecha.value;
+    const tipo = selTipo.value;
+    if (!base || !['primera', 'segunda', 'mensual'].includes(tipo)) { hintFecha.innerHTML = ''; return; }
+    const a = Number(base.slice(0, 4)); const m = Number(base.slice(5, 7));
+    const sugerida = fechaPagoQuincena(a, m, tipo === 'primera' ? 1 : 2);
+    hintFecha.innerHTML = sugerida === base
+      ? 'Es la fecha de pago según el calendario.'
+      : `Según el calendario se paga el <a href="#" id="usarFechaSugerida">${fmtDate(sugerida)}</a>.`;
+    const a2 = hintFecha.querySelector('#usarFechaSugerida');
+    if (a2) a2.addEventListener('click', (e) => { e.preventDefault(); inpFecha.value = sugerida; actualizarSugerencia(); });
+  };
+  if (selTipo && inpFecha) { selTipo.addEventListener('change', actualizarSugerencia); inpFecha.addEventListener('change', actualizarSugerencia); actualizarSugerencia(); }
 
   const btnGenerarCorrida = root.querySelector('#btnGenerarCorrida');
   if (btnGenerarCorrida) btnGenerarCorrida.addEventListener('click', () => {

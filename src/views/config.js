@@ -11,10 +11,14 @@ import { esMaster } from '../lib/auth.js';
 import { sincronizarManual } from '../lib/autoSync.js';
 import { exportBackup, importBackup } from '../lib/backup.js';
 import { usuariosHTML, wireUsuarios } from './usuarios.js';
+import { calendarioHTML, wireCalendario } from './calendarioLaboral.js';
+import { catalogosHTML, wireCatalogos } from './catalogosConfig.js';
 
 const MODULOS_TODOS = [
   { id: 'usuarios', label: 'Usuarios', soloMaster: true },
   { id: 'tasas', label: 'Tasas' },
+  { id: 'calendario', label: 'Calendario' },
+  { id: 'catalogos', label: 'Áreas y cargos' },
   { id: 'nube', label: 'Nube' },
   { id: 'parametros', label: 'Parámetros' },
   { id: 'nomina', label: 'Nómina' },
@@ -42,10 +46,14 @@ export function render(root, rerender) {
 
   wire(root, rerender);
   if (MODULO_ACTIVO === 'usuarios') wireUsuarios(root, () => render(root, rerender));
+  if (MODULO_ACTIVO === 'calendario') wireCalendario(root, () => render(root, rerender));
+  if (MODULO_ACTIVO === 'catalogos') wireCatalogos(root, () => render(root, rerender));
 }
 
 function moduloHTML(modulo) {
   if (modulo === 'usuarios') return esMaster() ? usuariosHTML() : '';
+  if (modulo === 'calendario') return calendarioHTML();
+  if (modulo === 'catalogos') return catalogosHTML();
   if (modulo === 'tasas') return tasasHTML();
   if (modulo === 'nube') return nubeHTML();
   if (modulo === 'parametros') return parametrosHTML();
@@ -220,6 +228,11 @@ function parametrosHTML() {
         <div class="field"><label>Piso cotización RPE (en salarios mínimos)</label><input type="number" step="0.5" name="rpePisoSalariosMinimos" value="${c.rpePisoSalariosMinimos}"><div class="legal">Art. 46 misma ley — mínimo por debajo del cual igual se cotiza sobre este piso</div></div>
         <div class="field"><label>INCES trabajador (% solo sobre utilidades)</label><input type="number" step="0.01" name="incesTrabajador" value="${c.incesTrabajador}"></div>
         <div class="field"><label>INCES patrono (% trimestral sobre nómina)</label><input type="number" step="0.01" name="incesPatrono" value="${c.incesPatrono}"></div>
+        <div class="field"><label>Recargo por trabajar feriado o descanso (%)</label><input type="number" step="0.01" name="feriadoTrabajadoRecargoPct" value="${c.feriadoTrabajadoRecargoPct !== undefined ? c.feriadoTrabajadoRecargoPct : 50}"><div class="legal">Art. 120 LOTTT: 50% sobre el salario normal del día. Se aplica a lo registrado en Nómina → Feriados trabajados.</div></div>
+        <div class="field"><label>Además del recargo, ¿se paga el día trabajado?</label>
+          <select name="feriadoTrabajadoPagaDia"><option value="1" ${c.feriadoTrabajadoPagaDia !== false ? 'selected' : ''}>Sí: día trabajado + recargo (factor 1,5)</option><option value="0" ${c.feriadoTrabajadoPagaDia === false ? 'selected' : ''}>No: solo el recargo (factor 0,5)</option></select>
+          <div class="legal">El sueldo mensual ya cubre feriados y descansos; el día trabajado se paga aparte. Confirme el criterio con la contadora.</div>
+        </div>
         <div class="field"><label>Ley de Protección de las Pensiones / DPP patrono (%)</label><input type="number" step="0.01" name="dppPatrono" value="${c.dppPatrono}"><div class="legal">100% patronal, recaudada por el SENIAT — la ley permite hasta 15%, actualmente fijada en 9%. Verifique la alícuota vigente antes de declarar.</div></div>
         <div class="field"><label>Base mínima de cálculo DPP (por trabajador)</label><input type="number" step="0.01" name="dppBaseMinima" value="${c.dppBaseMinima}"><div class="legal">Déjelo en 0 para calcular la DPP solo con la fórmula de ley (9% sobre lo realmente pagado). Si pone un monto, el aporte de quien gane menos que eso en el mes se calcula igual sobre ese mínimo. Cifra vigente ≈ USD 240 (USD 40 cestaticket + USD 200 bono). Cambia con frecuencia.</div></div>
         <div class="field"><label>Moneda de la base mínima DPP</label>
@@ -509,6 +522,7 @@ function wire(root, rerender) {
       const cestaMonedaAntes = state.CONFIG.cestaticketMoneda || 'VES';
       for (const [k, v] of fd.entries()) {
         if (k === 'nombreEmpresa' || k === 'rif' || k === 'cestaticketMoneda' || k === 'dppBaseMinimaMoneda' || k === 'domicilioLegal' || k === 'repLegalNombre' || k === 'repLegalCedula' || k === 'repLegalCargo') state.CONFIG[k] = v;
+        else if (k === 'feriadoTrabajadoPagaDia') state.CONFIG[k] = v !== '0';
         else state.CONFIG[k] = Number(v);
       }
       const cestaDespues = Number(state.CONFIG.cestaticket || 0);

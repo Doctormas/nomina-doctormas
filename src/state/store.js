@@ -2,6 +2,7 @@
 // del archivo original) + persistencia vía IPC en vez de localStorage.
 
 import { descifrarParalela, combinarParalela } from '../lib/paralelaCrypto.js';
+import { feriadosDeLey } from '../lib/feriados.js';
 
 function defaultConfig() {
   return {
@@ -9,6 +10,10 @@ function defaultConfig() {
     cestaticket: 0,               // monto mensual del bono de alimentación, NO salarial (Ley Cestaticket)
     cestaticketMoneda: 'USD',     // 'VES' o 'USD' — moneda en que se fija el bono de alimentación
     historialCestaticket: [],     // [{ id, fecha, monto, moneda }] — qué bono general regía desde cada fecha
+    feriadoTrabajadoRecargoPct: 50, // % de recargo por trabajar feriado/descanso (Art. 120 LOTTT) sobre el salario normal del día
+    feriadoTrabajadoPagaDia: true,  // además del recargo, se paga el día trabajado completo (factor 1 + recargo)
+    feriados: [],                 // [{ id, fecha, nombre, tipo }] — feriados y días no laborables (Configuración → Calendario)
+    feriadosAnos: [],             // años cuyos feriados de ley ya se cargaron (se carga el actual y el siguiente)
     ivssTrabajador: 4,            // % fijo, Art. 66 Ley del Seguro Social
     ivssPatrono: 10,                // % según riesgo: 9 mínimo / 10 medio / 11 máximo (LOPCYMAT) —
                                     // Doctormás está clasificado "RIESGO: 2" (medio) en su factura IVSS
@@ -106,6 +111,8 @@ export const state = {
   HISTORICO_TASAS: [],
   BONO_VAC_PAGADO: [],
   BONO_ALIM_PAGADO: [],
+  // Días trabajados en feriado / descanso / no laborable decretado: [{ id, empId, fecha, tipo, nota }]
+  FERIADOS_TRABAJADOS: [],
   // Historial de modificaciones (quién, cuándo, qué sección) — ver
   // registrarCambio() más abajo. Se comparte igual que el resto de los datos
   // al sincronizar, así cada equipo ve también lo que hizo el otro.
@@ -181,6 +188,51 @@ function corregirTiposNomina() {
   if (t && t.segunda && t.segunda.label === 'Segunda quincena (16–30) — Cierre de mes') t.segunda.label = 'Segunda quincena (16–30)';
 }
 
+/**
+ * Carga los feriados de ley del año actual y del siguiente, una sola vez por año
+ * (lo que el usuario edite o agregue después no se pisa). Ids deterministas, para
+ * que dos equipos que siembren a la vez no dupliquen nada al sincronizar.
+ */
+export function asegurarFeriados() {
+  const c = state.CONFIG;
+  if (!c) return;
+  if (!Array.isArray(c.feriados)) c.feriados = [];
+  if (!Array.isArray(c.feriadosAnos)) c.feriadosAnos = [];
+  const ano = new Date().getFullYear();
+  [ano, ano + 1].forEach((y) => {
+    if (c.feriadosAnos.includes(y)) return;
+    const existentes = new Set(c.feriados.map((f) => f.fecha));
+    feriadosDeLey(y).forEach((f) => { if (!existentes.has(f.fecha)) c.feriados.push(f); });
+    c.feriadosAnos.push(y);
+  });
+}
+
+/** Clave para comparar textos sin importar mayúsculas, tildes ni espacios de más. */
+export function claveCatalogo(t) {
+  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Listas de Áreas y Cargos (Configuración). La primera vez se arman con lo que ya
+ * está escrito en las fichas, sin repetir (mismo texto aunque cambien mayúsculas
+ * o tildes). Después solo se modifican desde Configuración.
+ */
+export function asegurarCatalogos() {
+  const c = state.CONFIG;
+  if (!c) return;
+  const sembrar = (campo, getter) => {
+    if (Array.isArray(c[campo])) return;
+    const vistos = new Map();
+    (state.EMPLEADOS || []).forEach((e) => {
+      const v = String(getter(e) || '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('es');
+      if (v && !vistos.has(claveCatalogo(v))) vistos.set(claveCatalogo(v), v);
+    });
+    c[campo] = [...vistos.values()].sort((a, b) => a.localeCompare(b, 'es'));
+  };
+  sembrar('cargos', (e) => e.cargo);
+  sembrar('areas', (e) => e.departamento);
+}
+
 export async function loadState() {
   const data = await window.api.store.load();
   state.CONFIG = Object.assign(defaultConfig(), data.CONFIG || {});
@@ -191,7 +243,9 @@ export async function loadState() {
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
   corregirTiposNomina();
+  asegurarFeriados();
   state.EMPLEADOS = data.EMPLEADOS || [];
+  asegurarCatalogos();
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
   state.PERMISOS_REMUNERADOS = data.PERMISOS_REMUNERADOS || [];
@@ -200,6 +254,7 @@ export async function loadState() {
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  state.FERIADOS_TRABAJADOS = data.FERIADOS_TRABAJADOS || [];
   state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
   state.RESPALDOS_AUTO = data.RESPALDOS_AUTO || [];
   state.PARALELA = Object.assign({ pinHash: '', salt: '', pagos: [] }, data.PARALELA || {});
@@ -230,6 +285,7 @@ function collectStorageDoc() {
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
+    FERIADOS_TRABAJADOS: state.FERIADOS_TRABAJADOS,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, RESPALDOS_AUTO: state.RESPALDOS_AUTO,
     PARALELA: state.PARALELA, PARALELA_CLAVE: state.PARALELA_CLAVE, SESION_RECORDADA: state.SESION_RECORDADA,
     SYNC_BASE: state.SYNC_BASE,
@@ -296,7 +352,9 @@ export async function restaurarRespaldoAuto(id) {
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
   corregirTiposNomina();
+  asegurarFeriados();
   state.EMPLEADOS = data.EMPLEADOS || [];
+  asegurarCatalogos();
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
   state.PERMISOS_REMUNERADOS = data.PERMISOS_REMUNERADOS || [];
@@ -305,6 +363,7 @@ export async function restaurarRespaldoAuto(id) {
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  if (Array.isArray(data.FERIADOS_TRABAJADOS)) state.FERIADOS_TRABAJADOS = data.FERIADOS_TRABAJADOS;
   // Nunca hacia atrás — no se reutiliza un N° de recibo ya entregado.
   state.PROXIMO_NUMERO_RECIBO = Math.max(state.PROXIMO_NUMERO_RECIBO || 1, data.PROXIMO_NUMERO_RECIBO || 1);
   await persistAll(`Restaurado a un punto anterior: "${snap.seccion}" (${fechaTxt})`);
@@ -382,6 +441,7 @@ export function collectFullState() {
     UTILIDADES_PAGADAS: state.UTILIDADES_PAGADAS,
     LIQUIDACIONES: state.LIQUIDACIONES, HISTORICO_TASAS: state.HISTORICO_TASAS,
     BONO_VAC_PAGADO: state.BONO_VAC_PAGADO, BONO_ALIM_PAGADO: state.BONO_ALIM_PAGADO,
+    FERIADOS_TRABAJADOS: state.FERIADOS_TRABAJADOS,
     HISTORIAL_CAMBIOS: state.HISTORIAL_CAMBIOS, PROXIMO_NUMERO_RECIBO: state.PROXIMO_NUMERO_RECIBO,
     USUARIOS: state.USUARIOS, ROLES: state.ROLES
   };
@@ -398,7 +458,9 @@ export async function applyFullState(data) {
     ? Object.assign(defaultConfig().tiposNomina, data.CONFIG.tiposNomina)
     : defaultConfig().tiposNomina;
   corregirTiposNomina();
+  asegurarFeriados();
   state.EMPLEADOS = data.EMPLEADOS || [];
+  asegurarCatalogos();
   state.PERIODOS = data.PERIODOS || [];
   state.VAC_DISFRUTE = data.VAC_DISFRUTE || [];
   state.PERMISOS_REMUNERADOS = data.PERMISOS_REMUNERADOS || [];
@@ -407,6 +469,8 @@ export async function applyFullState(data) {
   state.HISTORICO_TASAS = data.HISTORICO_TASAS || [];
   state.BONO_VAC_PAGADO = data.BONO_VAC_PAGADO || [];
   state.BONO_ALIM_PAGADO = data.BONO_ALIM_PAGADO || [];
+  // Una versión anterior de la app sube el documento sin este campo: no se borra lo local.
+  if (Array.isArray(data.FERIADOS_TRABAJADOS)) state.FERIADOS_TRABAJADOS = data.FERIADOS_TRABAJADOS;
   state.HISTORIAL_CAMBIOS = data.HISTORIAL_CAMBIOS || [];
   // Nunca se pisan las cuentas locales con "nada": una versión anterior de la
   // app (o un respaldo viejo) sube el documento sin usuarios.

@@ -7,7 +7,8 @@ import { logoHeaderHTML } from '../lib/logo.js';
 import { constanciaTrabajoHTML } from '../lib/constancia.js';
 import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
-import { plantillaEmpleadosPayload, mapearFilasBulk, validarRegistroBulk } from '../lib/bulkEmpleados.js';
+import { plantillaEmpleadosPayload, mapearFilasBulk, mapearCambiosSueldo, validarRegistroBulk, soloDigitos } from '../lib/bulkEmpleados.js';
+import { selectorCatalogoHTML, wireSelectoresCatalogo, canonico, agregarACatalogo, listaCatalogo } from '../lib/catalogos.js';
 import { construirListadoEmpleadosHTML, informeConAcciones } from '../lib/informes.js';
 
 const MODULOS = [
@@ -51,8 +52,27 @@ export function render(root, rerender) {
   wire(root, rerender);
 }
 
-function listadoHTML() {
-  const rows = state.EMPLEADOS.map((e) => {
+// Filtros del listado (se conservan mientras la app esté abierta). Por defecto: solo activos.
+const FILTRO = { estado: 'activo', texto: '', departamento: '' };
+
+function empleadosFiltrados() {
+  const q = normalizarBusqueda(FILTRO.texto);
+  return state.EMPLEADOS.filter((e) => {
+    if (FILTRO.estado !== 'todos' && estadoDe(e) !== FILTRO.estado) return false;
+    if (FILTRO.departamento && (e.departamento || '') !== FILTRO.departamento) return false;
+    if (q && !normalizarBusqueda(`${e.nombre} ${e.cedula || ''} ${e.cargo || ''}`).includes(q)) return false;
+    return true;
+  });
+}
+
+function normalizarBusqueda(t) {
+  return String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+function filasEmpleadosHTML() {
+  const lista = empleadosFiltrados();
+  if (!lista.length) return '<tr class="empty-row"><td colspan="10">Ningún empleado coincide con los filtros.</td></tr>';
+  return lista.map((e) => {
     const ant = antiguedad(e.fechaIngreso);
     return `<tr>
       <td>${e.nombre}</td>
@@ -70,7 +90,18 @@ function listadoHTML() {
       </div></td>
     </tr>`;
   }).join('');
+}
 
+function resumenFiltroHTML() {
+  const total = state.EMPLEADOS.length;
+  const mostrados = empleadosFiltrados().length;
+  const cuenta = (est) => state.EMPLEADOS.filter((e) => estadoDe(e) === est).length;
+  return `Mostrando ${mostrados} de ${total} · ${cuenta('activo')} activos · ${cuenta('egresado')} egresados${cuenta('inactivo') ? ` · ${cuenta('inactivo')} inactivos` : ''}`;
+}
+
+function listadoHTML() {
+  const deptos = [...new Set([...listaCatalogo('areas'), ...state.EMPLEADOS.map((e) => e.departamento).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'es'));
+  const opt = (v, t) => `<option value="${v}" ${FILTRO.estado === v ? 'selected' : ''}>${t}</option>`;
   return `
   <div class="card">
     <h2>Empleados</h2>
@@ -79,10 +110,16 @@ function listadoHTML() {
       <button class="btn" id="btnNuevoEmp">+ Nuevo empleado</button>
       <button class="btn secondary" id="btnCargaMasiva">⇪ Carga masiva de empleados</button>
     </div>
-    <div class="table-wrap" style="margin-top:14px;">
+    <div class="emp-filtros">
+      <div class="field"><label>Buscar</label><input type="search" id="empFiltroTexto" placeholder="Nombre, cédula o cargo" value="${FILTRO.texto.replace(/"/g, '&quot;')}"></div>
+      <div class="field"><label>Estado</label><select id="empFiltroEstado">${opt('activo', 'Activos')}${opt('egresado', 'Egresados')}${opt('inactivo', 'Inactivos')}${opt('todos', 'Todos')}</select></div>
+      <div class="field"><label>Departamento</label><select id="empFiltroDepto"><option value="">Todos</option>${deptos.map((d) => `<option value="${d}" ${FILTRO.departamento === d ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+    </div>
+    <div class="legal" id="empFiltroResumen" style="margin-top:6px;">${resumenFiltroHTML()}</div>
+    <div class="table-wrap" style="margin-top:10px;">
     <table>
       <thead><tr><th>Nombre</th><th>Cédula</th><th>Cargo</th><th>Ingreso</th><th>Antigüedad</th><th>Salario actual</th><th>Utilidades</th><th>Bono de alimentación</th><th>Estado</th><th></th></tr></thead>
-      <tbody>${rows || '<tr class="empty-row"><td colspan="10">Aún no hay empleados registrados.</td></tr>'}</tbody>
+      <tbody id="empTbody">${filasEmpleadosHTML()}</tbody>
     </table>
     </div>
   </div>`;
@@ -104,6 +141,33 @@ function wire(root, rerender) {
   if (btnNuevoEmp) btnNuevoEmp.addEventListener('click', () => openEmpModal(null, rerender));
   const btnCargaMasiva = root.querySelector('#btnCargaMasiva');
   if (btnCargaMasiva) btnCargaMasiva.addEventListener('click', () => openBulkModal(rerender));
+  wireFilas(root, rerender);
+
+  const refrescarTabla = () => {
+    const tb = root.querySelector('#empTbody');
+    if (!tb) return;
+    tb.innerHTML = filasEmpleadosHTML();
+    root.querySelector('#empFiltroResumen').innerHTML = resumenFiltroHTML();
+    wireFilas(root, rerender);
+  };
+  const fTexto = root.querySelector('#empFiltroTexto');
+  if (fTexto) fTexto.addEventListener('input', () => { FILTRO.texto = fTexto.value; refrescarTabla(); });
+  const fEstado = root.querySelector('#empFiltroEstado');
+  if (fEstado) fEstado.addEventListener('change', () => { FILTRO.estado = fEstado.value; refrescarTabla(); });
+  const fDepto = root.querySelector('#empFiltroDepto');
+  if (fDepto) fDepto.addEventListener('change', () => { FILTRO.departamento = fDepto.value; refrescarTabla(); });
+
+  const btnGenerarInfEmpleados = root.querySelector('#btnGenerarInfEmpleados');
+  if (btnGenerarInfEmpleados) btnGenerarInfEmpleados.addEventListener('click', () => {
+    const soloActivos = root.querySelector('#empInfSoloActivos').checked;
+    const { contenidoHtml, csvHeaders, csvRows } = construirListadoEmpleadosHTML(soloActivos);
+    const cont = root.querySelector('#empInformeResultado');
+    cont.innerHTML = '';
+    cont.appendChild(informeConAcciones({ contenidoHtml, filename: `listado-empleados-${todayStr()}.pdf`, pdfTitle: 'Listado de personal', csvHeaders, csvRows }));
+  });
+}
+
+function wireFilas(root, rerender) {
   root.querySelectorAll('[data-edit-emp]').forEach((b) => {
     b.addEventListener('click', () => openEmpModal(state.EMPLEADOS.find((e) => e.id === b.dataset.editEmp), rerender));
   });
@@ -127,15 +191,6 @@ function wire(root, rerender) {
       await persistAll(`Empleado eliminado: ${empBorrado ? empBorrado.nombre : id}`);
       rerender();
     });
-  });
-
-  const btnGenerarInfEmpleados = root.querySelector('#btnGenerarInfEmpleados');
-  if (btnGenerarInfEmpleados) btnGenerarInfEmpleados.addEventListener('click', () => {
-    const soloActivos = root.querySelector('#empInfSoloActivos').checked;
-    const { contenidoHtml, csvHeaders, csvRows } = construirListadoEmpleadosHTML(soloActivos);
-    const cont = root.querySelector('#empInformeResultado');
-    cont.innerHTML = '';
-    cont.appendChild(informeConAcciones({ contenidoHtml, filename: `listado-empleados-${todayStr()}.pdf`, pdfTitle: 'Listado de personal', csvHeaders, csvRows }));
   });
 }
 
@@ -259,8 +314,8 @@ function empleadoFormModal(emp, idParaNuevo) {
 
         <div class="emp-tab-panel" data-emptab-panel="laborales" hidden>
           <div class="grid cols-3">
-            <div class="field"><label>Cargo</label><input name="cargo" value="${emp.cargo || ''}"></div>
-            <div class="field"><label>Departamento / área</label><input name="departamento" value="${emp.departamento || ''}"></div>
+            <div class="field"><label>Cargo</label>${selectorCatalogoHTML('cargos', 'cargo', emp.cargo)}</div>
+            <div class="field"><label>Departamento / área</label>${selectorCatalogoHTML('areas', 'departamento', emp.departamento)}</div>
             <div class="field"><label>Tipo de contrato</label>
               <select name="tipoContrato">
                 <option value="indefinido" ${emp.tipoContrato === 'indefinido' ? 'selected' : ''}>Tiempo indeterminado</option>
@@ -485,6 +540,8 @@ function empleadoFormModal(emp, idParaNuevo) {
                 <option value="despido_justificado" ${egreso.causa === 'despido_justificado' ? 'selected' : ''}>Despido justificado</option>
                 <option value="despido_injustificado" ${egreso.causa === 'despido_injustificado' ? 'selected' : ''}>Despido injustificado</option>
                 <option value="mutuo_acuerdo" ${egreso.causa === 'mutuo_acuerdo' ? 'selected' : ''}>Mutuo acuerdo</option>
+                <option value="causa_ajena" ${egreso.causa === 'causa_ajena' ? 'selected' : ''}>Causas ajenas a la voluntad de las partes</option>
+                <option value="fallecimiento" ${egreso.causa === 'fallecimiento' ? 'selected' : ''}>Fallecimiento</option>
               </select>
             </div>
           </div>
@@ -544,6 +601,8 @@ function openEmpModal(emp, rerender) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = empleadoFormModal(emp, empId);
   document.body.appendChild(wrapper.firstElementChild);
+
+  wireSelectoresCatalogo(document.getElementById('empModalOverlay'));
 
   const empTabToggle = document.getElementById('empTabToggle');
   if (empTabToggle) empTabToggle.querySelectorAll('button').forEach((b) => {
@@ -908,6 +967,7 @@ const TIPO_CONTRATO_A_MODALIDAD = { indefinido: 'indeterminado', determinado: 'd
    MODAL: CARGA MASIVA
    ========================================================= */
 let BULK_REGISTROS = [];
+let BULK_CAMBIOS_SUELDO = [];
 
 function bulkModalHTML() {
   return `
@@ -948,8 +1008,13 @@ function openBulkModal(rerender) {
     previewArea.innerHTML = '<div class="note">Leyendo archivo…</div>';
     try {
       const buffer = await file.arrayBuffer();
-      const filas = await window.api.xlsx.parseFile(buffer);
+      // Plantilla de egresados: la hoja se llama "Personal" (la primera es de instrucciones).
+      let filas = await window.api.xlsx.parseFile(buffer, 'Personal');
+      if (!filas.length) filas = await window.api.xlsx.parseFile(buffer);
       BULK_REGISTROS = mapearFilasBulk(filas);
+      let hojaCambios = [];
+      try { hojaCambios = await window.api.xlsx.parseFile(buffer, 'Cambios de sueldo'); } catch (e) { hojaCambios = []; }
+      BULK_CAMBIOS_SUELDO = mapearCambiosSueldo(hojaCambios);
       renderBulkPreview(rerender);
     } catch (err) {
       previewArea.innerHTML = `<div class="note">No se pudo leer el archivo: ${err.message}</div>`;
@@ -971,13 +1036,13 @@ function renderBulkPreview(rerender) {
     const estado = errores.length ? `<span class="tag err">${errores.join(', ')}</span>` : (duplicado ? '<span class="tag warn">cédula ya existe — se omitirá</span>' : '<span class="tag ok">OK</span>');
     return `<tr>
       <td>${i + 1}</td><td>${r.nombre || '—'}</td><td>${r.cedula || '—'}</td><td>${fmtDate(r.fechaIngreso) || '—'}</td>
-      <td>${r.salarioBase !== '' ? r.salarioBase : '—'} ${r.monedaSalario}</td><td>${r.cargo || '—'}</td><td>${estado}</td>
+      <td>${r.salarioBase !== '' ? r.salarioBase : '—'} ${r.monedaSalario}</td><td>${r.cargo || '—'}</td><td>${r.fechaEgreso ? fmtDate(r.fechaEgreso) : '—'}</td><td>${estado}</td>
     </tr>`;
   }).join('');
   previewArea.innerHTML = `
-    <div class="legal" style="margin-top:10px;">${BULK_REGISTROS.length} filas leídas · ${validos} válidas · ${invalidos} con errores${duplicados ? ` · ${duplicados} con cédula duplicada (se omitirán)` : ''}</div>
+    <div class="legal" style="margin-top:10px;">${BULK_REGISTROS.length} filas leídas · ${validos} válidas · ${invalidos} con errores${duplicados ? ` · ${duplicados} con cédula duplicada (se omitirán)` : ''}${BULK_CAMBIOS_SUELDO.length ? ` · ${BULK_CAMBIOS_SUELDO.filter((c) => c.valido).length} cambios de sueldo` : ''}</div>
     <div class="table-wrap" style="max-height:320px;overflow-y:auto;margin-top:8px;">
-    <table><thead><tr><th>#</th><th>Nombre</th><th>Cédula</th><th>Ingreso</th><th>Salario</th><th>Cargo</th><th>Estado</th></tr></thead>
+    <table><thead><tr><th>#</th><th>Nombre</th><th>Cédula</th><th>Ingreso</th><th>Salario</th><th>Cargo</th><th>Egreso</th><th>Estado</th></tr></thead>
     <tbody>${rows}</tbody></table>
     </div>
     <button class="btn" id="btnConfirmarBulk" style="margin-top:14px;" ${validos - duplicados <= 0 ? 'disabled' : ''}>Importar ${Math.max(validos - duplicados, 0)} empleados válidos</button>
@@ -991,11 +1056,28 @@ async function confirmarImportacionBulk(rerender) {
   BULK_REGISTROS.forEach((r) => {
     const { errores, duplicado } = validarRegistroBulk(r);
     if (errores.length || duplicado) return;
+    // Cargo y área: se usa el nombre estándar de la lista; lo que no exista se agrega a ella.
+    const cargoEstandar = canonico('cargos', r.cargo) || agregarACatalogo('cargos', r.cargo);
+    const areaEstandar = canonico('areas', r.departamento) || agregarACatalogo('areas', r.departamento);
+    const cedulaLimpia = soloDigitos(r.cedula);
+    const historial = BULK_CAMBIOS_SUELDO
+      .filter((c) => c.valido && cedulaLimpia && soloDigitos(c.cedula) === cedulaLimpia)
+      .sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+      .map((c) => ({ fecha: c.fecha, moneda: c.moneda, monto: c.monto, tasa: '', montoBs: c.moneda === 'VES' ? c.monto : '' }));
+    const egresado = !!r.fechaEgreso;
+    const tramite = (hecho) => ({ hecho, fecha: hecho && egresado ? r.fechaEgreso : '' });
     state.EMPLEADOS.push({
-      id: uid(), nombre: r.nombre, cedula: r.cedula, cargo: r.cargo, fechaIngreso: r.fechaIngreso,
-      salarioBase: Number(r.salarioBase), monedaSalario: r.monedaSalario, activo: r.activo, historial: [],
+      id: uid(), nombre: r.nombre, cedula: r.cedula, cargo: cargoEstandar, fechaIngreso: r.fechaIngreso,
+      salarioBase: Number(r.salarioBase), monedaSalario: r.monedaSalario, activo: r.activo, historial,
+      estado: egresado ? 'egresado' : (r.activo ? 'activo' : 'inactivo'),
+      egreso: egresado ? {
+        fecha: r.fechaEgreso, causa: r.motivoEgreso || '',
+        tramites: { ivss: tramite(r.tramiteIvss), faov: tramite(r.tramiteFaov), inces: tramite(r.tramiteInces), rpe: tramite(r.tramiteRpe) }
+      } : null,
+      inscritoIVSS: r.inscritoIVSS, islrPorcentaje: (r.islrPorcentaje !== '' && !isNaN(r.islrPorcentaje)) ? Number(r.islrPorcentaje) : '',
+      tieneTarjetaAlimentacion: true, documentos: [],
       fechaNacimiento: r.fechaNacimiento, nacionalidad: r.nacionalidad, sexo: r.sexo, direccion: r.direccion,
-      telefono: r.telefono, correo: r.correo, departamento: r.departamento, tipoContrato: r.tipoContrato,
+      telefono: r.telefono, correo: r.correo, departamento: areaEstandar, tipoContrato: r.tipoContrato,
       formaPago: r.formaPago, banco: r.banco, numeroCuenta: r.numeroCuenta,
       contactoEmergenciaNombre: r.contactoEmergenciaNombre, contactoEmergenciaTelefono: r.contactoEmergenciaTelefono,
       diasUtilidadesAnual: (r.diasUtilidadesAnual !== '' && !isNaN(r.diasUtilidadesAnual)) ? Number(r.diasUtilidadesAnual) : '',
@@ -1014,4 +1096,5 @@ function closeBulkModal() {
   const ov = document.getElementById('bulkModalOverlay');
   if (ov) ov.remove();
   BULK_REGISTROS = [];
+  BULK_CAMBIOS_SUELDO = [];
 }

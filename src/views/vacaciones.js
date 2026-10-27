@@ -7,6 +7,7 @@ import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
 import { construirLibroVacacionesHTML, informeConAcciones } from '../lib/informes.js';
 import { estadoDe } from './empleados.js';
+import { calcularDisfrute } from '../lib/diasHabiles.js';
 
 // El bono vacacional se calcula y se paga desde la pestaña Nómina (es otro
 // tipo de nómina más) — aquí solo queda el seguimiento del disfrute de
@@ -104,7 +105,7 @@ function individualHTML() {
   const opciones = opcionesEmpleados();
   const historialDisfrute = state.VAC_DISFRUTE.slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 20).map((v) => {
     const emp = state.EMPLEADOS.find((e) => e.id === v.empId);
-    return `<tr><td>${emp ? emp.nombre : '—'}</td><td>Año ${v.anoServicio}</td><td>${v.dias}</td><td>${fmtDate(v.fecha)}</td>
+    return `<tr><td>${emp ? emp.nombre : '—'}</td><td>Año ${v.anoServicio}</td><td>${v.dias}</td><td>${fmtDate(v.fecha)}</td><td>${v.reintegro ? fmtDate(v.reintegro) : '—'}</td>
       <td class="row-actions"><div class="row-actions-inner"><button type="button" class="btn ghost small icon-only" data-descargar-vacdisf="${v.id}" title="Descargar PDF">⬇</button><button type="button" class="btn danger ghost small icon-only" data-eliminar-vacdisf="${v.id}" title="Quitar">✕</button></div></td></tr>`;
   }).join('');
   const historialPermisos = state.PERMISOS_REMUNERADOS.slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 20).map((p) => {
@@ -123,14 +124,15 @@ function individualHTML() {
       <div class="field"><label>Fecha de inicio del disfrute</label><input type="date" id="vacDisfFecha" value="${todayStr()}"></div>
       <div class="field" style="grid-column:1 / -1;"><label>Observaciones (opcional)</label><textarea id="vacDisfObservaciones" rows="2" placeholder="Se imprime en el comprobante — ej. disfrute fraccionado, acuerdo especial, etc."></textarea></div>
     </div>
+    <div class="note" id="vacDisfFechas" style="margin-top:10px;"></div>
     <button class="btn" id="btnRegistrarVac" style="margin-top:10px;">Calcular</button>
     <div id="vacDisfResultado"></div>
   </div>
   <div class="card">
     <h2>Historial de disfrute de vacaciones</h2>
     <div class="desc">Últimos registros, individuales o de una tanda colectiva.</div>
-    <div class="table-wrap"><table><thead><tr><th>Empleado</th><th>Año de servicio</th><th>Días</th><th>Fecha de inicio</th><th></th></tr></thead>
-    <tbody>${historialDisfrute || '<tr class="empty-row"><td colspan="5">Sin disfrutes registrados aún.</td></tr>'}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Empleado</th><th>Año de servicio</th><th>Días</th><th>Fecha de inicio</th><th>Reintegro</th><th></th></tr></thead>
+    <tbody>${historialDisfrute || '<tr class="empty-row"><td colspan="6">Sin disfrutes registrados aún.</td></tr>'}</tbody></table></div>
   </div>
   <div class="card">
     <h2>Historial de permisos remunerados</h2>
@@ -198,6 +200,33 @@ function wire(root, rerender) {
   }
   if (vacEmpSel) { vacEmpSel.addEventListener('change', renderVacResultado); renderVacResultado(); }
 
+  // Fechas del disfrute: las vacaciones son en DÍAS HÁBILES (Art. 190 LOTTT), así que
+  // no cuentan los días de descanso del trabajador ni los feriados / no laborables.
+  const textoOmitidos = (om) => {
+    const desc = om.filter((o) => o.tipo === 'descanso').length;
+    const fer = om.filter((o) => o.tipo === 'feriado');
+    const partes = [];
+    if (desc) partes.push(`${desc} día${desc === 1 ? '' : 's'} de descanso`);
+    if (fer.length) partes.push(`${fer.length} feriado${fer.length === 1 ? '' : 's'} (${fer.map((o) => o.motivo + ' ' + fmtDate(o.fecha).slice(0, 5)).join(', ')})`);
+    return partes.join(' y ');
+  };
+  function actualizarFechasDisfrute() {
+    const cont = root.querySelector('#vacDisfFechas');
+    if (!cont) return;
+    const emp = state.EMPLEADOS.find((e) => e.id === root.querySelector('#vacDisfEmp').value);
+    const dias = Number(root.querySelector('#vacDisfDias').value);
+    const inicio = root.querySelector('#vacDisfFecha').value;
+    if (!emp || !(dias > 0) || !inicio) { cont.innerHTML = ''; return; }
+    const r = calcularDisfrute(emp, inicio, dias);
+    cont.innerHTML = `<b>Días hábiles:</b> del ${fmtDate(r.inicio)} al <b>${fmtDate(r.fin)}</b> — se reincorpora el <b>${fmtDate(r.reintegro)}</b>.`
+      + (r.omitidos.length ? `<br><span class="legal">No cuentan como disfrute: ${textoOmitidos(r.omitidos)}.</span>` : '');
+  }
+  ['#vacDisfEmp', '#vacDisfDias', '#vacDisfFecha'].forEach((sel) => {
+    const el = root.querySelector(sel);
+    if (el) { el.addEventListener('change', actualizarFechasDisfrute); el.addEventListener('input', actualizarFechasDisfrute); }
+  });
+  actualizarFechasDisfrute();
+
   const btnRegistrarVac = root.querySelector('#btnRegistrarVac');
   if (btnRegistrarVac) btnRegistrarVac.addEventListener('click', () => {
     const empId = root.querySelector('#vacDisfEmp').value;
@@ -212,10 +241,14 @@ function wire(root, rerender) {
     // registro real ocurre al hacer clic en "Confirmar registro" abajo,
     // igual que una corrida de nómina: primero se revisa, después se confirma.
     const { asignaciones, permisoDias, avisos } = planificarDisfrute(emp, diasTotales, fecha);
+    const hab = calcularDisfrute(emp, fecha, diasTotales);
     const filasReparto = asignaciones.map((a) => [`Año de servicio ${a.anoServicio}`, `${a.dias} días`]);
     if (permisoDias > 0) filasReparto.push(['Permiso remunerado (no descuenta ningún año)', `${permisoDias} días`]);
     const contenidoHtml = comprobante(`${empresaConRif()} — Comprobante de disfrute de vacaciones`, [
-      ['Empleado', emp.nombre], ['Fecha de inicio', fmtDate(fecha)], ['Total de días', diasTotales], ...filasReparto,
+      ['Empleado', emp.nombre], ['Fecha de inicio', fmtDate(fecha)], ['Total de días hábiles', diasTotales],
+      ['Último día de disfrute', fmtDate(hab.fin)], ['Se reincorpora el', fmtDate(hab.reintegro)],
+      ...(hab.omitidos.length ? [['No cuentan (descanso y feriados)', textoOmitidos(hab.omitidos)]] : []),
+      ...filasReparto,
       ...(observaciones ? [['Observaciones', observaciones]] : [])
     ]) + (avisos.length ? `<div class="note" style="margin-top:10px;">${avisos.join('<br><br>')}</div>` : '');
 
@@ -234,7 +267,7 @@ function wire(root, rerender) {
           if (!ok) return;
         }
         asignaciones.forEach(({ anoServicio, dias }) => {
-          state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha, observaciones });
+          state.VAC_DISFRUTE.push({ id: uid(), empId, anoServicio, dias, fecha, fin: hab.fin, reintegro: hab.reintegro, observaciones });
         });
         if (permisoDias > 0) {
           state.PERMISOS_REMUNERADOS.push({ id: uid(), empId, dias: permisoDias, fecha });

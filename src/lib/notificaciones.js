@@ -4,6 +4,7 @@
 import { state } from '../state/store.js';
 import { estadoDe } from '../views/empleados.js';
 import { periodoNominal, cestaticketVigenteEmp } from './calculos.js';
+import { fechaPagoQuincena } from './calendarioPagos.js';
 import { todayStr, parseDate, fmtDate } from './formato.js';
 
 function esBancamiga(banco) {
@@ -96,6 +97,11 @@ export function calcularNotificaciones() {
   const periodo = periodoActual(hoyISO);
   const yaCorrida = state.PERIODOS.some((p) => p.tipoPeriodo === periodo.tipoPeriodo && p.fecha >= periodo.desde && p.fecha <= periodo.fecha);
   if (!yaCorrida) {
+    // La fecha de pago real: el 15 / fin de mes, corrido al día hábil anterior si
+    // cae en fin de semana o feriado (Configuración → Calendario).
+    const hoyD = parseDate(hoyISO);
+    const fechaPago = fechaPagoQuincena(hoyD.getFullYear(), hoyD.getMonth() + 1, hoyD.getDate() <= 15 ? 1 : 2);
+    periodo.fecha = fechaPago < periodo.fecha ? fechaPago : periodo.fecha;
     const diasRestantes = Math.round((parseDate(periodo.fecha) - parseDate(hoyISO)) / 86400000);
     if (diasRestantes <= 3) {
       const texto = diasRestantes < 0

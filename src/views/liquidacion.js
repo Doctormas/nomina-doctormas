@@ -17,7 +17,9 @@ const CAUSA_LABELS = {
   renuncia: 'Renuncia voluntaria',
   despido_justificado: 'Despido justificado',
   despido_injustificado: 'Despido injustificado',
-  mutuo_acuerdo: 'Mutuo acuerdo'
+  mutuo_acuerdo: 'Mutuo acuerdo',
+  causa_ajena: 'Causas ajenas a la voluntad de las partes',
+  fallecimiento: 'Fallecimiento'
 };
 
 export function render(root, rerender) {
@@ -51,6 +53,8 @@ function calcularHTML() {
           <option value="despido_justificado">Despido justificado</option>
           <option value="despido_injustificado">Despido injustificado</option>
           <option value="mutuo_acuerdo">Mutuo acuerdo</option>
+          <option value="causa_ajena">Causas ajenas a la voluntad de las partes</option>
+          <option value="fallecimiento">Fallecimiento</option>
         </select>
       </div>
     </div>
