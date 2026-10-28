@@ -643,33 +643,97 @@ export function construirInformePrestacionesHTML(hasta) {
 }
 
 /* ---------- Empleados: listado de personal ---------- */
-export function construirListadoEmpleadosHTML(soloActivos) {
+const estadoEmpleado = (e) => e.estado || (e.activo === false ? (e.motivoBaja ? 'egresado' : 'inactivo') : 'activo');
+const ETIQUETA_ESTADO = { activo: 'Activo', egresado: 'Egresado', inactivo: 'Inactivo' };
+const ETIQUETA_MOTIVO = {
+  renuncia: 'Renuncia', despido_justificado: 'Despido justificado', despido_injustificado: 'Despido injustificado',
+  mutuo_acuerdo: 'Mutuo acuerdo', causa_ajena: 'Causas ajenas a la voluntad de las partes', fallecimiento: 'Fallecimiento'
+};
+const normBusq = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+/** Columnas que se pueden elegir en el listado de personal. */
+export const COLUMNAS_LISTADO = [
+  { key: 'nombre', label: 'Nombre', def: true, txt: (e) => e.nombre },
+  { key: 'cedula', label: 'Cédula', def: true, txt: (e) => e.cedula || '' },
+  { key: 'cargo', label: 'Cargo', def: true, txt: (e) => e.cargo || '' },
+  { key: 'departamento', label: 'Departamento', def: true, txt: (e) => e.departamento || '' },
+  { key: 'ingreso', label: 'Ingreso', def: true, txt: (e) => fmtDate(e.fechaIngreso), csv: (e) => e.fechaIngreso || '' },
+  { key: 'egreso', label: 'Egreso', def: false, txt: (e) => (e.egreso && e.egreso.fecha ? fmtDate(e.egreso.fecha) : ''), csv: (e) => (e.egreso && e.egreso.fecha) || '' },
+  { key: 'motivo', label: 'Motivo de egreso', def: false, txt: (e) => ETIQUETA_MOTIVO[e.egreso && e.egreso.causa] || '' },
+  { key: 'antiguedad', label: 'Antigüedad', def: true, txt: (e) => {
+    // Quien ya egresó: antigüedad hasta su egreso (no hasta hoy).
+    const hasta = e.egreso && e.egreso.fecha && estadoEmpleado(e) !== 'activo' ? e.egreso.fecha : undefined;
+    const ant = antiguedad(e.fechaIngreso, hasta); return `${ant.anos}a ${ant.meses}m`;
+  } },
+  { key: 'salario', label: 'Salario actual', def: true, txt: (e, f) => fmt(salarioVigente(e, f)), csv: (e, f) => salarioVigente(e, f).toFixed(2) },
+  { key: 'salarioUsd', label: 'Salario (US$)', def: false, txt: (e, f) => 'US$ ' + fmtNum(salarioVigente(e, f) / (tasaEnFecha(f) || 1), 2), csv: (e, f) => (salarioVigente(e, f) / (tasaEnFecha(f) || 1)).toFixed(2) },
+  { key: 'utilidades', label: 'Días utilidades', def: true, txt: (e) => String(diasUtilidadesEmp(e)) },
+  { key: 'bono', label: 'Bono de alimentación', def: true, txt: (e, f) => fmt(cestaticketEmp(e, f), f), csv: (e, f) => cestaticketEmp(e, f).toFixed(2) },
+  { key: 'contrato', label: 'Tipo de contrato', def: false, txt: (e) => ({ indefinido: 'Tiempo indeterminado', determinado: 'Tiempo determinado', obra_determinada: 'Obra determinada', pasantia: 'Pasantía' }[e.tipoContrato] || '') },
+  { key: 'telefono', label: 'Teléfono', def: false, txt: (e) => e.telefono || '' },
+  { key: 'correo', label: 'Correo', def: false, txt: (e) => e.correo || '' },
+  { key: 'estado', label: 'Estado', def: true, txt: (e) => ETIQUETA_ESTADO[estadoEmpleado(e)] }
+];
+
+const ORDENES_LISTADO = {
+  nombre: (a, b) => a.nombre.localeCompare(b.nombre, 'es'),
+  ingreso: (a, b) => (a.fechaIngreso || '').localeCompare(b.fechaIngreso || ''),
+  egreso: (a, b) => ((a.egreso && a.egreso.fecha) || '9999').localeCompare((b.egreso && b.egreso.fecha) || '9999'),
+  cargo: (a, b) => (a.cargo || '').localeCompare(b.cargo || '', 'es') || a.nombre.localeCompare(b.nombre, 'es'),
+  departamento: (a, b) => (a.departamento || '').localeCompare(b.departamento || '', 'es') || a.nombre.localeCompare(b.nombre, 'es'),
+  salario: (a, b) => salarioVigente(b, new Date().toISOString().slice(0, 10)) - salarioVigente(a, new Date().toISOString().slice(0, 10))
+};
+export const OPCIONES_ORDEN_LISTADO = [
+  ['nombre', 'Nombre (A–Z)'], ['ingreso', 'Fecha de ingreso'], ['egreso', 'Fecha de egreso'],
+  ['cargo', 'Cargo'], ['departamento', 'Departamento'], ['salario', 'Salario (mayor a menor)']
+];
+
+/**
+ * Listado de personal a la medida: filtra (estado, departamento, cargo, texto), elige columnas,
+ * ordena y, si se quiere, agrupa por departamento o cargo con subtotal de personas.
+ * opc = { estado, departamento, cargo, texto, columnas[], orden, agruparPor ('', 'departamento', 'cargo') }
+ */
+export function construirListadoEmpleadosHTML(opc) {
+  if (typeof opc === 'boolean') opc = { estado: opc ? 'activo' : 'todos' }; // compatibilidad
+  const o = Object.assign({ estado: 'activo', departamento: '', cargo: '', texto: '', orden: 'nombre', agruparPor: '' }, opc || {});
   const fecha = new Date().toISOString().slice(0, 10);
-  const lista = soloActivos ? state.EMPLEADOS.filter((e) => e.activo !== false) : state.EMPLEADOS;
-  const rows = lista.map((e) => {
-    const ant = antiguedad(e.fechaIngreso);
-    return `<tr>
-      <td>${e.nombre}</td><td>${e.cedula || '—'}</td><td>${e.cargo || '—'}</td><td>${e.departamento || '—'}</td>
-      <td>${fmtDate(e.fechaIngreso)}</td><td>${ant.anos}a ${ant.meses}m</td>
-      <td>${fmt(salarioVigente(e, fecha))}</td><td>${diasUtilidadesEmp(e)}</td><td>${fmt(cestaticketEmp(e, fecha), fecha)}</td>
-      <td>${e.activo === false ? 'Inactivo' : 'Activo'}</td>
-    </tr>`;
-  }).join('');
+  const cols = COLUMNAS_LISTADO.filter((c) => (o.columnas && o.columnas.length ? o.columnas.includes(c.key) : c.def));
+  const q = normBusq(o.texto);
+  const lista = state.EMPLEADOS.filter((e) => {
+    if (o.estado !== 'todos' && estadoEmpleado(e) !== o.estado) return false;
+    if (o.departamento && (e.departamento || '') !== o.departamento) return false;
+    if (o.cargo && (e.cargo || '') !== o.cargo) return false;
+    if (q && !normBusq(`${e.nombre} ${e.cedula || ''} ${e.cargo || ''}`).includes(q)) return false;
+    return true;
+  }).sort(o.agruparPor ? (a, b) => (a[o.agruparPor] || '').localeCompare(b[o.agruparPor] || '', 'es') || (ORDENES_LISTADO[o.orden] || ORDENES_LISTADO.nombre)(a, b) : (ORDENES_LISTADO[o.orden] || ORDENES_LISTADO.nombre));
+
+  const fila = (e) => `<tr>${cols.map((c) => `<td>${c.txt(e, fecha) || '—'}</td>`).join('')}</tr>`;
+  let cuerpo = '';
+  if (o.agruparPor) {
+    const grupos = new Map();
+    lista.forEach((e) => { const g = e[o.agruparPor] || 'Sin ' + (o.agruparPor === 'cargo' ? 'cargo' : 'departamento'); if (!grupos.has(g)) grupos.set(g, []); grupos.get(g).push(e); });
+    grupos.forEach((personas, g) => {
+      cuerpo += `<tr><td colspan="${cols.length}" style="background:#f3ece6;font-weight:600;">${g} <span style="font-weight:400;">· ${personas.length} ${personas.length === 1 ? 'persona' : 'personas'}</span></td></tr>${personas.map(fila).join('')}`;
+    });
+  } else {
+    cuerpo = lista.map(fila).join('');
+  }
+  const filtros = [
+    o.estado === 'todos' ? 'Todos los estados' : ({ activo: 'Solo activos', egresado: 'Solo egresados', inactivo: 'Solo inactivos' }[o.estado]),
+    o.departamento && `Departamento: ${o.departamento}`, o.cargo && `Cargo: ${o.cargo}`, o.texto && `Búsqueda: "${o.texto}"`
+  ].filter(Boolean).join(' · ');
   const contenidoHtml = `
     <div>
       ${logoHeaderHTML()}
       <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Listado de personal</h3>
-      <div class="legal">${soloActivos ? 'Solo empleados activos' : 'Todos los empleados'} · al ${fmtDate(fecha)} · ${lista.length} personas</div>
-      <table style="margin-top:10px;"><thead><tr><th>Nombre</th><th>Cédula</th><th>Cargo</th><th>Departamento</th><th>Ingreso</th><th>Antigüedad</th><th>Salario actual</th><th>Días utilidades</th><th>Bono de alimentación</th><th>Estado</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:var(--charcoal-soft);">Aún no hay empleados registrados.</td></tr>'}</tbody></table>
+      <div class="legal">${filtros} · al ${fmtDate(fecha)} · ${lista.length} ${lista.length === 1 ? 'persona' : 'personas'}</div>
+      <table style="margin-top:10px;"><thead><tr>${cols.map((c) => `<th>${c.label}</th>`).join('')}</tr></thead>
+      <tbody>${cuerpo || `<tr><td colspan="${cols.length}" style="text-align:center;color:var(--charcoal-soft);">Ningún empleado coincide con los filtros.</td></tr>`}</tbody></table>
     </div>`;
   return {
     contenidoHtml,
-    csvHeaders: ['Nombre', 'Cédula', 'Cargo', 'Departamento', 'Ingreso', 'Antigüedad', 'Salario actual', 'Días utilidades', 'Bono de alimentación', 'Estado'],
-    csvRows: lista.map((e) => {
-      const ant = antiguedad(e.fechaIngreso);
-      return [e.nombre, e.cedula || '', e.cargo || '', e.departamento || '', e.fechaIngreso, `${ant.anos}a ${ant.meses}m`, salarioVigente(e, fecha).toFixed(2), diasUtilidadesEmp(e), cestaticketEmp(e, fecha).toFixed(2), e.activo === false ? 'Inactivo' : 'Activo'];
-    })
+    csvHeaders: cols.map((c) => c.label),
+    csvRows: lista.map((e) => cols.map((c) => (c.csv ? c.csv(e, fecha) : c.txt(e, fecha))))
   };
 }
 

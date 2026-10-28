@@ -7,6 +7,7 @@
 // Historial de modificaciones.
 import { state, persistAll, empresaConRif, tasaEnFecha, syncConfigured } from '../state/store.js';
 import { descifrarParalela } from '../lib/paralelaCrypto.js';
+import { cabecerasNube } from '../lib/versionNube.js';
 import { logoHeaderHTML } from '../lib/logo.js';
 import { fmtDate, fmtNum, todayStr, uid } from '../lib/formato.js';
 import { confirmDialog } from '../components/confirm.js';
@@ -611,7 +612,7 @@ function wireRespaldo(root, rerender) {
     try {
       // Si ya hay paralela en la nube, esta clave debe poder abrirla.
       if (syncConfigured()) {
-        const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/state', { headers: { 'X-Access-Pin': state.SYNC.pin } });
+        const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/state', { headers: await cabecerasNube(state.SYNC.pin) });
         if (res.ok) {
           const j = await res.json();
           const blob = j && j.data ? j.data.PARALELA_CIFRADA : null;

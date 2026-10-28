@@ -227,12 +227,55 @@ function wireMenuActions() {
 }
 
 /* ---------- Actualizaciones (electron-updater) ---------- */
+const REVISION_ACTUALIZACION_MS = 4 * 60 * 60 * 1000;
+let versionAvisada = null;
+
+// Aviso de "hay una versión nueva": una vez por versión en cada sesión; "Más tarde" lo deja
+// recordado en la barra lateral (tocarlo instala).
+function avisarActualizacion(version) {
+  const etiqueta = document.getElementById('sidebarVersion');
+  if (etiqueta && !etiqueta.dataset.base) etiqueta.dataset.base = etiqueta.textContent;
+  if (etiqueta) {
+    etiqueta.textContent = `${etiqueta.dataset.base} · ⬆ v${version} disponible`;
+    etiqueta.style.cursor = 'pointer';
+    etiqueta.title = 'Hay una versión nueva: toque para actualizar';
+    etiqueta.onclick = () => instalarActualizacion(version);
+  }
+  if (versionAvisada === version || document.querySelector('.modal-overlay')) return;
+  versionAvisada = version;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-confirm" style="max-width:460px;">
+      <h3>Hay una versión nueva (v${version})</h3>
+      <p class="confirm-message">Actualice para tener las últimas mejoras y poder sincronizar con la nube sin problemas. Sus datos no se pierden al actualizar.</p>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn" data-op="ahora">Actualizar ahora</button>
+        <button class="btn ghost" data-op="luego">Más tarde</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('[data-op="luego"]').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('[data-op="ahora"]').addEventListener('click', () => { overlay.remove(); instalarActualizacion(version); });
+}
+
+async function instalarActualizacion(version) {
+  try { await persistAll(); } catch (e) { /* ya se guarda en cada cambio */ }
+  toast(`Instalando la v${version}…`, 'info', 4000);
+  window.api.updater.install();
+}
+
 function wireUpdater() {
   if (!window.api || !window.api.updater) return;
   window.api.updater.onStatus((data) => {
     state.UPDATER_STATUS = data;
+    if (data && data.status === 'downloaded' && data.version) avisarActualizacion(data.version);
     if (ACTIVE_TAB === 'config') render();
   });
+  // Al abrir (con un respiro para no competir con el arranque) y luego cada pocas horas.
+  const revisar = () => { try { window.api.updater.check(); } catch (e) { /* sin actualizador */ } };
+  setTimeout(revisar, 12000);
+  setInterval(revisar, REVISION_ACTUALIZACION_MS);
 }
 
 // Mantiene el histórico de tasas al día solo: rellena automáticamente los

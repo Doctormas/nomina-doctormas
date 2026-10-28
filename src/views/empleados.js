@@ -9,7 +9,7 @@ import { confirmDialog } from '../components/confirm.js';
 import { toast } from '../components/toast.js';
 import { plantillaEmpleadosPayload, mapearFilasBulk, mapearCambiosSueldo, validarRegistroBulk, soloDigitos } from '../lib/bulkEmpleados.js';
 import { selectorCatalogoHTML, wireSelectoresCatalogo, canonico, agregarACatalogo, listaCatalogo } from '../lib/catalogos.js';
-import { construirListadoEmpleadosHTML, informeConAcciones } from '../lib/informes.js';
+import { construirListadoEmpleadosHTML, informeConAcciones, COLUMNAS_LISTADO, OPCIONES_ORDEN_LISTADO } from '../lib/informes.js';
 
 const MODULOS = [
   { id: 'listado', label: 'Listado' },
@@ -125,13 +125,32 @@ function listadoHTML() {
   </div>`;
 }
 
+// Opciones del informe de personal (se conservan mientras la app esté abierta).
+const INFORME = { estado: 'activo', departamento: '', cargo: '', texto: '', orden: 'nombre', agruparPor: '', columnas: COLUMNAS_LISTADO.filter((c) => c.def).map((c) => c.key) };
+
 function informesHTML() {
+  const sel = (v, actual) => (v === actual ? 'selected' : '');
+  const opcionesLista = (tipo, actual) => listaCatalogo(tipo).map((x) => `<option value="${x}" ${sel(x, actual)}>${x}</option>`).join('');
   return `
   <div class="card">
     <h2>Listado de personal</h2>
-    <div class="desc">Directorio completo de empleados con cargo, antigüedad, salario actual y bono de alimentación, listo para exportar.</div>
-    <label class="checkline"><input type="checkbox" id="empInfSoloActivos" checked> Solo empleados activos</label>
-    <button class="btn" id="btnGenerarInfEmpleados" style="margin-top:10px;">Generar listado</button>
+    <div class="desc">Arme el informe como lo necesite: filtre, elija las columnas, el orden y si quiere agruparlo. Luego imprímalo, expórtelo a CSV o PDF.</div>
+    <div class="emp-filtros">
+      <div class="field"><label>Buscar</label><input type="search" id="infTexto" placeholder="Nombre, cédula o cargo" value="${INFORME.texto.replace(/"/g, '&quot;')}"></div>
+      <div class="field"><label>Estado</label><select id="infEstado">
+        <option value="activo" ${sel('activo', INFORME.estado)}>Activos</option><option value="egresado" ${sel('egresado', INFORME.estado)}>Egresados</option>
+        <option value="inactivo" ${sel('inactivo', INFORME.estado)}>Inactivos</option><option value="todos" ${sel('todos', INFORME.estado)}>Todos</option></select></div>
+      <div class="field"><label>Departamento</label><select id="infDepto"><option value="">Todos</option>${opcionesLista('areas', INFORME.departamento)}</select></div>
+    </div>
+    <div class="emp-filtros" style="margin-top:12px;">
+      <div class="field"><label>Cargo</label><select id="infCargo"><option value="">Todos</option>${opcionesLista('cargos', INFORME.cargo)}</select></div>
+      <div class="field"><label>Ordenar por</label><select id="infOrden">${OPCIONES_ORDEN_LISTADO.map(([v, t]) => `<option value="${v}" ${sel(v, INFORME.orden)}>${t}</option>`).join('')}</select></div>
+      <div class="field"><label>Agrupar por</label><select id="infAgrupar"><option value="">Sin agrupar</option><option value="departamento" ${sel('departamento', INFORME.agruparPor)}>Departamento</option><option value="cargo" ${sel('cargo', INFORME.agruparPor)}>Cargo</option></select></div>
+    </div>
+    <div class="field" style="margin-top:14px;"><label>Columnas a mostrar</label>
+      <div class="inf-columnas">${COLUMNAS_LISTADO.map((c) => `<label class="checkline"><input type="checkbox" data-inf-col="${c.key}" ${INFORME.columnas.includes(c.key) ? 'checked' : ''}> ${c.label}</label>`).join('')}</div>
+    </div>
+    <button class="btn" id="btnGenerarInfEmpleados" style="margin-top:14px;">Generar listado</button>
     <div id="empInformeResultado"></div>
   </div>`;
 }
@@ -159,8 +178,15 @@ function wire(root, rerender) {
 
   const btnGenerarInfEmpleados = root.querySelector('#btnGenerarInfEmpleados');
   if (btnGenerarInfEmpleados) btnGenerarInfEmpleados.addEventListener('click', () => {
-    const soloActivos = root.querySelector('#empInfSoloActivos').checked;
-    const { contenidoHtml, csvHeaders, csvRows } = construirListadoEmpleadosHTML(soloActivos);
+    INFORME.texto = root.querySelector('#infTexto').value;
+    INFORME.estado = root.querySelector('#infEstado').value;
+    INFORME.departamento = root.querySelector('#infDepto').value;
+    INFORME.cargo = root.querySelector('#infCargo').value;
+    INFORME.orden = root.querySelector('#infOrden').value;
+    INFORME.agruparPor = root.querySelector('#infAgrupar').value;
+    INFORME.columnas = [...root.querySelectorAll('[data-inf-col]')].filter((i) => i.checked).map((i) => i.dataset.infCol);
+    if (!INFORME.columnas.length) { toast('Elija al menos una columna.', 'error'); return; }
+    const { contenidoHtml, csvHeaders, csvRows } = construirListadoEmpleadosHTML(INFORME);
     const cont = root.querySelector('#empInformeResultado');
     cont.innerHTML = '';
     cont.appendChild(informeConAcciones({ contenidoHtml, filename: `listado-empleados-${todayStr()}.pdf`, pdfTitle: 'Listado de personal', csvHeaders, csvRows }));

@@ -1,6 +1,7 @@
 // Sincronización en la nube con el Worker propio de Cloudflare del equipo —
 // misma API y mismo protocolo (X-Access-Pin) del archivo original.
 import { state, syncConfigured, collectFullState, applyFullState, persistAll, actorDeSesion, fijarBaseSync } from '../state/store.js';
+import { cabecerasNube, revisarVersionExigida } from './versionNube.js';
 import { cifrarParalela, descifrarParalela, combinarParalela } from './paralelaCrypto.js';
 
 // Guardar el estado local como consecuencia de sincronizar no cuenta como
@@ -19,7 +20,8 @@ function syncEndpoint() {
 // (o el teléfono) haya registrado. Un equipo sin la clave deja intacto lo que
 // ya está en la nube.
 async function paralelaParaSubir() {
-  const res = await fetch(syncEndpoint(), { headers: { 'X-Access-Pin': state.SYNC.pin } });
+  const res = await fetch(syncEndpoint(), { headers: await cabecerasNube(state.SYNC.pin) });
+  await revisarVersionExigida(res);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const j = await res.json();
   const remoto = j && j.data ? j.data.PARALELA_CIFRADA : null;
@@ -60,11 +62,12 @@ export async function syncPush(onStatus) {
     const timeout = setTimeout(() => controller.abort(), 30000);
     const res = await fetch(syncEndpoint(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Access-Pin': state.SYNC.pin },
+      headers: await cabecerasNube(state.SYNC.pin, { 'Content-Type': 'application/json' }),
       body: cuerpo,
       signal: controller.signal
     });
     clearTimeout(timeout);
+    await revisarVersionExigida(res);
     if (res.status === 409) {
       const remoto = await res.json();
       state.SYNC.status = 'conflicto';
@@ -95,8 +98,9 @@ export async function revisionEnNube() {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/revision', { headers: { 'X-Access-Pin': state.SYNC.pin }, signal: controller.signal });
+    const res = await fetch(state.SYNC.url.replace(/\/$/, '') + '/api/revision', { headers: await cabecerasNube(state.SYNC.pin), signal: controller.signal });
     clearTimeout(timeout);
+    await revisarVersionExigida(res);
     if (!res.ok) return null;
     const j = await res.json();
     return Number.isInteger(j.revision) ? j : null;
@@ -112,8 +116,9 @@ export async function syncPull(silent, onStatus) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(syncEndpoint(), { headers: { 'X-Access-Pin': state.SYNC.pin }, signal: controller.signal });
+    const res = await fetch(syncEndpoint(), { headers: await cabecerasNube(state.SYNC.pin), signal: controller.signal });
     clearTimeout(timeout);
+    await revisarVersionExigida(res);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const j = await res.json();
     if (j && j.data) {
@@ -140,8 +145,9 @@ export async function syncPull(silent, onStatus) {
 export async function syncConnect() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
-  const res = await fetch(syncEndpoint(), { headers: { 'X-Access-Pin': state.SYNC.pin }, signal: controller.signal });
+  const res = await fetch(syncEndpoint(), { headers: await cabecerasNube(state.SYNC.pin), signal: controller.signal });
   clearTimeout(timeout);
+  await revisarVersionExigida(res);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const j = await res.json();
   if (j && j.data) {

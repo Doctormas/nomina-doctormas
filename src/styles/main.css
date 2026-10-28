@@ -645,3 +645,6 @@ tbody tr:hover td{background:#fbf8f5;}
 /* Lista plegable de áreas/cargos con opción de agregar */
 .catalogo-nuevo{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;}
 .catalogo-nuevo input{flex:1;min-width:140px;}
+
+/* Columnas elegibles del listado de personal */
+.inf-columnas{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin-top:6px;}
