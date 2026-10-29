@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('file:saveAs', { content, suggestedName, extensionName, extensions })
   },
   pdf: {
-    export: (html, title, suggestedName) => ipcRenderer.invoke('pdf:export', { html, title, suggestedName })
+    export: (html, title, suggestedName) => ipcRenderer.invoke('pdf:export', { html, title, suggestedName }),
+    toBase64: (html, title) => ipcRenderer.invoke('pdf:toBase64', { html, title })
   },
   contrato: {
     export: (datos, defaultFilename) => ipcRenderer.invoke('contrato:export', { datos, defaultFilename })

@@ -178,6 +178,12 @@ ipcMain.handle('pdf:export', async (evt, { html, title, suggestedName }) => {
   return { canceled: false, filePath: res.filePath };
 });
 
+// PDF en memoria (base64), sin diálogo de guardado: para adjuntarlo a un correo.
+ipcMain.handle('pdf:toBase64', async (evt, { html, title }) => {
+  const buffer = await renderHtmlToPdfBuffer(html, title);
+  return buffer.toString('base64');
+});
+
 /* ---------- IPC: Contrato de trabajo (Word) ---------- */
 ipcMain.handle('contrato:export', async (evt, { datos, defaultFilename }) => {
   const buffer = await construirContratoBuffer(datos);

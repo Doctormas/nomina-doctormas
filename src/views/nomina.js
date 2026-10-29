@@ -1,5 +1,6 @@
 import { state, persistAll, tipoNominaCfg, tomarNumeroRecibo } from '../state/store.js';
 import { generarCorridaNomina, TIPOS_NOMINA_ESPECIALES, departamentosEmpleados } from '../lib/calculos.js';
+import { enviosHTML, wireEnvios } from './enviosNomina.js';
 import { construirResumenCorridaHTML, construirRecibosCorridaHTML } from '../lib/plantillasPdf.js';
 import { bonoAlimentacionBancoCSV, nominaBancoCSV } from '../lib/bancoCsv.js';
 import { construirInformeNominaHTML, construirInformeNominaMensualHTML, construirInformeUtilidadesHTML, informeConAcciones } from '../lib/informes.js';
@@ -14,6 +15,7 @@ import { feriadosTrabajadosHTML, wireFeriadosTrabajados } from './feriadosTrabaj
 const MODULOS = [
   { id: 'corridas', label: 'Corridas' },
   { id: 'feriados', label: 'Feriados trabajados' },
+  { id: 'envios', label: 'Envíos' },
   { id: 'informes', label: 'Informes' }
 ];
 let MODULO_ACTIVO = 'corridas';
@@ -105,7 +107,7 @@ export function render(root, rerender) {
   const pillsHtml = MODULOS.map((m) => `<button data-modulo="${m.id}" class="${MODULO_ACTIVO === m.id ? 'active' : ''}">${m.label}</button>`).join('');
   root.innerHTML = `
   <div class="pill-toggle" id="nomPillToggle" style="margin-bottom:18px;">${pillsHtml}</div>
-  <div id="nomModuloArea">${MODULO_ACTIVO === 'corridas' ? corridasHTML() : MODULO_ACTIVO === 'feriados' ? feriadosTrabajadosHTML() : informesHTML()}</div>`;
+  <div id="nomModuloArea">${MODULO_ACTIVO === 'corridas' ? corridasHTML() : MODULO_ACTIVO === 'feriados' ? feriadosTrabajadosHTML() : MODULO_ACTIVO === 'envios' ? enviosHTML(corridasGuardadas(), tipoLabelDe) : informesHTML()}</div>`;
 
   root.querySelector('#nomPillToggle').querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', () => {
@@ -116,6 +118,7 @@ export function render(root, rerender) {
 
   wire(root, rerender);
   if (MODULO_ACTIVO === 'feriados') wireFeriadosTrabajados(root, () => render(root, rerender));
+  if (MODULO_ACTIVO === 'envios') wireEnvios(root, () => render(root, rerender), corridasGuardadas(), tipoLabelDe);
 }
 
 function corridasHTML() {
