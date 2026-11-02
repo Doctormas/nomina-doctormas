@@ -627,7 +627,8 @@ export function generarCorridaNomina(tipoPeriodo, fechaPeriodoISO, departamento)
 
   if (tipoPeriodo === 'utilidades') {
     const ano = Number(fechaPeriodoISO.slice(0, 4));
-    const filas = activos.map((emp) => ({ emp, kind: 'utilidades', r: calcularUtilidades(emp, ano, fechaPeriodoISO) }));
+    // Quien sigue trabajando cuenta sus meses completos hasta el cierre del ejercicio (31/12), no hasta el día de pago.
+    const filas = activos.map((emp) => ({ emp, kind: 'utilidades', r: calcularUtilidades(emp, ano, fechaPeriodoISO, ano + '-12-31') }));
     const totales = filas.reduce((a, f) => ({
       devengado: a.devengado + f.r.montoBruto, deducciones: a.deducciones + f.r.incesTrabajador,
       neto: a.neto + f.r.montoNeto, aportes: a.aportes
@@ -774,13 +775,34 @@ export function cestaticketMonedaEmp(emp, fechaISO) {
   return cestaticketVigenteEmp(emp, fechaISO).moneda;
 }
 
-export function calcularUtilidades(emp, anoCalculo, fechaCorteISO) {
+/**
+ * Meses COMPLETOS de servicio entre dos fechas (ambas incluidas), contados de fecha a fecha:
+ * del 17/04 al 31/12 son 8 meses (del 17/04 al 17/12) y los 14 días restantes no suman.
+ * Así lo pide la LOTTT para las utilidades de quien no trabajó todo el año.
+ */
+export function mesesCompletosEntre(desdeISO, hastaISO) {
+  const d = parseDate(desdeISO), h = parseDate(hastaISO);
+  if (!d || !h || h < d) return 0;
+  const finExclusivo = new Date(h.getFullYear(), h.getMonth(), h.getDate() + 1);
+  let k = 0;
+  while (new Date(d.getFullYear(), d.getMonth() + k + 1, d.getDate()) <= finExclusivo) k++;
+  return k;
+}
+
+/**
+ * Utilidades del año `anoCalculo`: días anuales proporcionales a los MESES COMPLETOS de servicio
+ * (LOTTT: "la parte proporcional correspondiente a los meses completos de servicios prestados").
+ * `fechaCorteISO` es la fecha del pago (fija el salario vigente); `finServicioISO` es hasta cuándo se
+ * cuenta el servicio: para quien sigue trabajando en la corrida de diciembre es el cierre del año (31/12);
+ * para una liquidación, el día del egreso (por defecto, la propia fecha de corte).
+ */
+export function calcularUtilidades(emp, anoCalculo, fechaCorteISO, finServicioISO) {
   fechaCorteISO = fechaCorteISO || (anoCalculo + '-12-31');
   const inicioAno = anoCalculo + '-01-01';
   const ing = parseDate(emp.fechaIngreso);
   const desde = ing > parseDate(inicioAno) ? emp.fechaIngreso : inicioAno;
-  const hasta = fechaCorteISO;
-  const meses = mesesEntre(desde, hasta);
+  const hasta = finServicioISO || fechaCorteISO;
+  const meses = mesesCompletosEntre(desde, hasta);
   const salario = salarioVigente(emp, hasta);
   const salarioDiario = salario / 30;
   const diasAnual = diasUtilidadesEmp(emp);
