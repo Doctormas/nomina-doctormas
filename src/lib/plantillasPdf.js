@@ -62,7 +62,10 @@ export function reciboContentHTML(emp, fecha, r, numeroRecibo) {
       <table style="margin-top:6px;">
         <thead><tr><th>Devengado</th><th>Salario diario</th><th>Días</th><th>Total</th></tr></thead>
         <tbody>
-          <tr><td>Salario del período${r.periodoParcial ? (r.periodoParcialPorEgreso ? ' (parcial — egresó a mitad del período)' : ' (parcial — ingresó a mitad del período)') : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>
+          ${(r.diasVacaciones || 0) > 0 ? `
+          ${r.diasPeriodo - r.diasVacaciones > 0 ? `<tr><td>Sueldo${r.periodoParcial ? (r.periodoParcialPorEgreso ? ' (parcial — egresó a mitad del período)' : ' (parcial — ingresó a mitad del período)') : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo - r.diasVacaciones, 0)}</td><td>${fmt(r.salarioNormalPeriodo - r.montoVacaciones, fecha)}</td></tr>` : ''}
+          <tr><td>Vacaciones (${(r.detalleVacaciones || []).map((t) => t.desde === t.hasta ? fmtDate(t.desde) : 'del ' + fmtDate(t.desde) + ' al ' + fmtDate(t.hasta)).join(' y ')})</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasVacaciones, 0)}</td><td>${fmt(r.montoVacaciones, fecha)}</td></tr>`
+          : `<tr><td>Salario del período${r.periodoParcial ? (r.periodoParcialPorEgreso ? ' (parcial — egresó a mitad del período)' : ' (parcial — ingresó a mitad del período)') : ''}</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasPeriodo, 0)}</td><td>${fmt(r.salarioNormalPeriodo, fecha)}</td></tr>`}
           ${r.pagoFeriados > 0 ? `<tr><td>Feriados / descansos trabajados (${r.diasFeriadosTrab}${(r.detalleFeriados || []).length ? ': ' + r.detalleFeriados.map((d) => fmtDate(d.fecha)).join(', ') : ''})</td><td>${fmt(r.salarioDiario, fecha)}</td><td>${fmtNum(r.diasFeriadosTrab, 0)}</td><td>${fmt(r.pagoFeriados, fecha)}</td></tr>` : ''}
           <tr><td>Bono de alimentación (no salarial)${r.bonoAlimPagadoAparte ? ' — pagado por separado este mes' : (r.diasBonoMes < 30 && r.cestaticketPeriodo > 0 ? ` — ${r.diasBonoMes} de 30 días` : '')}</td><td>—</td><td>—</td><td>${fmt(r.cestaticketPeriodo, fecha)}</td></tr>
           <tr><td><b>Total devengado</b></td><td></td><td></td><td><b>${fmt(r.totalDevengado, fecha)}</b></td></tr>

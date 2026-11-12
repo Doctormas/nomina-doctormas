@@ -39,8 +39,10 @@ export function calcularNotificaciones() {
 
     if (estado === 'egresado' && e.egreso) {
       const t = e.egreso.tramites || {};
-      const nombres = { ivss: 'IVSS', faov: 'FAOV/BANAVIH', inces: 'INCES', rpe: 'RPE' };
-      const faltantes = Object.keys(nombres).filter((k) => !(t[k] && t[k].hecho));
+      // FAOV e INCES no llevan trámite por persona (se reportan en cada declaración: al dejar de reportarlo ya no cuenta),
+      // y IVSS/RPE solo hay que tramitarlos si la persona estuvo inscrita en el IVSS.
+      const nombres = { ivss: 'IVSS', rpe: 'RPE' };
+      const faltantes = e.inscritoIVSS === false ? [] : Object.keys(nombres).filter((k) => !(t[k] && t[k].hecho));
       if (faltantes.length) {
         notifs.push({
           id: `egreso-${e.id}`, tipo: 'egreso', severidad: 'alta',

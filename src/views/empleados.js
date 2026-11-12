@@ -501,6 +501,7 @@ function empleadoFormModal(emp, idParaNuevo) {
               <select name="inscritoIVSS"><option value="true" ${emp.inscritoIVSS !== false ? 'selected' : ''}>Sí</option><option value="false" ${emp.inscritoIVSS === false ? 'selected' : ''}>No</option></select>
               <div class="legal">Si no está inscrito, no se le calcula ni IVSS ni RPE (van juntos en la misma inscripción).</div>
             </div>
+            <div class="field"><label>Fecha de inscripción en el IVSS</label><input type="date" name="ivssFechaInscripcion" value="${emp.ivssFechaInscripcion || ''}"><div class="legal">La que figura en el IVSS (Movimientos de Trabajadores → Ingreso).</div></div>
             <div class="field"><label>% ISLR a retener (formulario AR-I)</label><input type="number" step="0.01" name="islrPorcentaje" value="${emp.islrPorcentaje !== undefined && emp.islrPorcentaje !== null ? emp.islrPorcentaje : ''}" placeholder="Vacío = 0% (sin retención)"><div class="legal">Solo aplica a quien esté obligado a declarar (ingresos anuales &gt; 1.000 U.T.). Calcule el % con la planilla AR-I que llena el trabajador; sin ella, se retiene 0%.</div></div>
           </div>
           <h3 style="font-size:1rem;margin-top:16px;">Sueldo semanal cargado en el IVSS</h3>
@@ -941,7 +942,7 @@ function openEmpModal(emp, rerender) {
       // Egresado quedan afuera igual (activo=false), pero se distinguen en
       // el listado y en la pestaña Egreso.
       estado: fd.get('estado') || 'activo', activo: fd.get('estado') === 'activo',
-      inscritoIVSS: fd.get('inscritoIVSS') !== 'false',
+      inscritoIVSS: fd.get('inscritoIVSS') !== 'false', ivssFechaInscripcion: fd.get('ivssFechaInscripcion') || '',
       tieneTarjetaAlimentacion: fd.get('tieneTarjetaAlimentacion') !== 'false',
       egreso: {
         fecha: fd.get('egresoFecha') || '', causa: fd.get('egresoCausa') || '',

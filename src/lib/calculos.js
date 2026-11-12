@@ -6,6 +6,7 @@
 // =========================================================
 import { state, tasaEnFecha, getTasaActualValor, tipoNominaCfg } from '../state/store.js';
 import { parseDate, todayStr } from './formato.js';
+import { calcularDisfrute } from './diasHabiles.js';
 
 /* ---------- Utilidades de fechas (para prorratear períodos parciales) ---------- */
 function sumarDias(fechaISO, delta) {
@@ -286,6 +287,24 @@ export function calcularBonoVacacional(emp, anoServicio, fechaPagoISO) {
   return { dias, salario, salarioDiario, monto, yaPagado };
 }
 
+/**
+ * Días de VACACIONES que caen dentro de [desde, hasta] (días de calendario, incluidos fines de
+ * semana y feriados que queden dentro del disfrute). Se toma cada disfrute registrado: desde su
+ * fecha de inicio hasta el día anterior a la reincorporación. Devuelve { dias, tramos:[{desde,hasta,dias}] }.
+ */
+export function vacacionesEnVentana(emp, desdeISO, hastaISO) {
+  const tramos = [];
+  (state.VAC_DISFRUTE || []).filter((v) => v.empId === emp.id && v.fecha && Number(v.dias) > 0).forEach((v) => {
+    let reintegro = v.reintegro;
+    if (!reintegro) { try { reintegro = calcularDisfrute(emp, v.fecha, Number(v.dias)).reintegro; } catch (e) { reintegro = null; } }
+    const fin = reintegro ? sumarDias(reintegro, -1) : sumarDias(v.fecha, Number(v.dias) - 1);
+    const a = v.fecha > desdeISO ? v.fecha : desdeISO;
+    const b = fin < hastaISO ? fin : hastaISO;
+    if (a <= b) tramos.push({ desde: a, hasta: b, dias: diasEntreInclusive(a, b) });
+  });
+  return { dias: tramos.reduce((x, t) => x + t.dias, 0), tramos };
+}
+
 // Fecha de egreso del empleado si ya egresó (Liquidación / ficha), o null.
 function fechaEgresoEmp(emp) {
   return (emp.activo === false && emp.egreso && emp.egreso.fecha) ? emp.egreso.fecha : null;
@@ -358,6 +377,11 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
   const diasPeriodo = diasEnVentana(emp, periodoDesdeCalc, periodoHastaCalc, diasConfigurados);
 
   const salarioNormalPeriodo = salarioDiario * diasPeriodo;
+  // Días de vacaciones dentro del período: siguen siendo salario (mismo total y mismas
+  // deducciones), pero el recibo los muestra con el concepto "Vacaciones", no como sueldo.
+  const vacs = vacacionesEnVentana(emp, periodoDesdeCalc, periodoHastaCalc);
+  const diasVacaciones = Math.min(vacs.dias, diasPeriodo);
+  const montoVacaciones = salarioDiario * diasVacaciones;
   // Feriados / descansos trabajados dentro del período: salarial, se suma al devengado
   // y a la base de las deducciones.
   const feriadosTrab = calcularFeriadosTrabajados(emp, periodoDesdeCalc, periodoHastaCalc);
@@ -454,6 +478,7 @@ export function calcularReciboNomina(emp, tipoKey, fechaPeriodoISO) {
     periodoParcial: diasPeriodo < diasConfigurados,
     periodoParcialPorEgreso: diasPeriodo < diasConfigurados && !!egresoEmp && egresoEmp <= periodoHastaCalc,
     periodoDesde, periodoHasta,
+    diasVacaciones, montoVacaciones, detalleVacaciones: vacs.tramos,
     tipoLabel: cfg.label, tasaBCV, usaTasaUSD,
     ivssTrab, rpeTrab, faovTrab, islrTrab, totalDeducciones, totalDevengado, neto,
     ivssPatrono, faovPatrono, rpePatrono, incesPatrono,
