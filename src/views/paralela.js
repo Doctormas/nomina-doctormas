@@ -15,6 +15,7 @@ import { toast } from '../components/toast.js';
 import { informeConAcciones, construirInformePagosMensualesUSD } from '../lib/informes.js';
 import { nominaBancoCSV } from '../lib/bancoCsv.js';
 import { estadoDe } from './empleados.js';
+import { antiguedad, diasBonoVacPorAno, diasUtilidadesEmp, mesesCompletosEntre, salarioVigente } from '../lib/calculos.js';
 import { puedeVer } from '../lib/auth.js';
 
 const MODULOS = [
@@ -243,6 +244,24 @@ function wireEmpleados(root, rerender) {
 }
 
 /* ---------- Correr nómina paralela ---------- */
+const PERIODOS_ANUALES = {
+  vacacional: 'Complemento de bono vacacional',
+  utilidades: 'Complemento de utilidades'
+};
+
+export function calcularUtilidadesParalelas(ano) {
+  const inicio = `${ano}-01-01`;
+  const cierre = `${ano}-12-31`;
+  const bonos = paralela().bonos;
+  return new Map(state.EMPLEADOS.filter((emp) => estadoDe(emp) === 'activo' && emp.fechaIngreso && emp.fechaIngreso <= cierre).map((emp) => {
+    const meses = mesesCompletosEntre(emp.fechaIngreso > inicio ? emp.fechaIngreso : inicio, cierre);
+    const bono = bonos[emp.id] || {};
+    const base = (Number(bono.q1) || 0) + (Number(bono.q2) || 0);
+    const monto = Math.round(base * diasUtilidadesEmp(emp) * meses / (30 * 12) * 100) / 100;
+    return [emp.id, { monto, moneda: bono.moneda === 'USD' ? 'USD' : 'VES' }];
+  }));
+}
+
 function nuevoHTML() {
   const emps = empleadosPagables();
   const hoy = todayStr();
@@ -257,11 +276,11 @@ function nuevoHTML() {
   return `
   <div class="card">
     <h2>Correr nómina paralela</h2>
-    <div class="desc">Elija el mes y la quincena: se cargan los bonos definidos en la pestaña "Empleados". Sin retenciones ni aportes — lo que figure es lo que recibe cada persona. Puede ajustar cualquier monto antes de registrar.</div>
+    <div class="desc">Elija el período para cargar los montos. En Bono vacacional y Utilidades se precarga el complemento calculado sobre las dos bonificaciones quincenales. Sin retenciones ni aportes — lo que figure es lo que recibe cada persona. Puede ajustar cualquier monto antes de registrar.</div>
     <div class="grid cols-4">
       <div class="field"><label>Mes</label><input type="month" id="parMes" value="${mes}"></div>
       <div class="field"><label>Período</label>
-        <select id="parQuincena"><option value="q1" ${q === 'q1' ? 'selected' : ''}>1ª quincena</option><option value="q2" ${q === 'q2' ? 'selected' : ''}>2ª quincena</option><option value="otro">Otro bono (monto libre)</option></select>
+        <select id="parQuincena"><option value="q1" ${q === 'q1' ? 'selected' : ''}>1ª quincena</option><option value="q2" ${q === 'q2' ? 'selected' : ''}>2ª quincena</option><option value="vacacional">Bono vacacional</option><option value="utilidades">Utilidades</option><option value="otro">Otro bono (monto libre)</option></select>
       </div>
       <div class="field"><label>Fecha de pago</label><input type="date" id="parFecha" value="${QUINCENAS[q].fecha(mes)}"></div>
       <div class="field"><label>Tasa BCV (Bs. por USD)</label><input type="number" id="parTasa" min="0" step="0.0001" value="${tasaEnFecha(QUINCENAS[q].fecha(mes)) || ''}"></div>
@@ -291,6 +310,10 @@ function wireNuevo(root, rerender) {
   const q = (s) => root.querySelector(s);
   const filas = () => Array.from(root.querySelectorAll('tr[data-emp]'));
   const tasa = () => Number(q('#parTasa').value) || 0;
+  const pagoPrevio = (mes, per) => paralela().pagos.find((p) => {
+    if (p.periodo?.quincena !== per) return false;
+    return PERIODOS_ANUALES[per] ? p.periodo.mes.slice(0, 4) === mes.slice(0, 4) : p.periodo.mes === mes;
+  });
 
   const recalcular = () => {
     let totalBs = 0; let n = 0;
@@ -309,7 +332,12 @@ function wireNuevo(root, rerender) {
     const mes = q('#parMes').value;
     const per = q('#parQuincena').value;
     if (!mes) return;
-    if (per !== 'otro') {
+    if (PERIODOS_ANUALES[per]) {
+      const diciembre = mes.slice(0, 4) + '-12';
+      q('#parMes').value = diciembre;
+      q('#parFecha').value = diciembre + '-12';
+      q('#parConcepto').value = `${PERIODOS_ANUALES[per]} ${mes.slice(0, 4)}`;
+    } else if (QUINCENAS[per]) {
       q('#parFecha').value = QUINCENAS[per].fecha(mes);
       q('#parConcepto').value = `Bono ${QUINCENAS[per].label} de ${mesTexto(mes)}`;
     } else {
@@ -318,7 +346,25 @@ function wireNuevo(root, rerender) {
     const t = tasaEnFecha(q('#parFecha').value);
     if (t) q('#parTasa').value = t;
     const P = paralela();
+    let complementos = new Map();
+    if (per === 'vacacional') {
+      try {
+        ({ complementos } = construirBonoVacacionalCompleto(q('#parFecha').value, tasa()));
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    }
+    if (per === 'utilidades') complementos = calcularUtilidadesParalelas(mes.slice(0, 4));
     filas().forEach((tr) => {
+      tr.hidden = Boolean(PERIODOS_ANUALES[per]) && !complementos.has(tr.dataset.emp);
+      if (PERIODOS_ANUALES[per]) {
+        const calculado = complementos.get(tr.dataset.emp);
+        const monto = (per === 'utilidades' ? calculado?.monto : calculado) || 0;
+        tr.querySelector('.parMonto').value = monto || '';
+        tr.querySelector('.parMonedaFila').value = calculado?.moneda || 'USD';
+        tr.querySelector('.parSel').checked = monto > 0;
+        return;
+      }
       const b = P.bonos[tr.dataset.emp];
       if (per === 'otro') {
         tr.querySelector('.parMonto').value = '';
@@ -330,10 +376,14 @@ function wireNuevo(root, rerender) {
       tr.querySelector('.parMonedaFila').value = b && b.moneda === 'USD' ? 'USD' : 'VES';
       tr.querySelector('.parSel').checked = monto > 0;
     });
-    const previo = per === 'otro' ? null : P.pagos.find((p) => p.periodo && p.periodo.mes === mes && p.periodo.quincena === per);
+    const previo = per === 'otro' ? null : pagoPrevio(mes, per);
     q('#parAviso').innerHTML = previo
       ? `<span class="tag warn">Ya hay un pago registrado de este período (N° ${previo.numero}, ${fmtDate(previo.fecha)}).</span>`
-      : '';
+      : per === 'vacacional'
+        ? 'La corrida incluye el complemento paralelo. El bono sobre sueldo se consulta en Informes.'
+        : per === 'utilidades'
+          ? 'Complemento sobre los bonos paralelos, proporcional a los meses completos de servicio hasta el 31 de diciembre.'
+          : '';
     recalcular();
   };
 
@@ -347,7 +397,7 @@ function wireNuevo(root, rerender) {
   q('#parTasa').addEventListener('input', recalcular);
   root.querySelectorAll('.parMonto, .parSel, .parMonedaFila').forEach((el) => el.addEventListener('input', recalcular));
   q('#parSelTodos').addEventListener('change', (e) => {
-    filas().forEach((tr) => { tr.querySelector('.parSel').checked = e.target.checked; });
+    filas().forEach((tr) => { tr.querySelector('.parSel').checked = !tr.hidden && e.target.checked; });
     recalcular();
   });
   q('#btnAplicarTodos').addEventListener('click', () => {
@@ -364,6 +414,7 @@ function wireNuevo(root, rerender) {
     const per = q('#parQuincena').value;
     const t = tasa();
     if (!fecha) return toast('Indique la fecha de pago.', 'error');
+    if (PERIODOS_ANUALES[per] && fecha.slice(0, 4) !== mes.slice(0, 4)) return toast('Indique una fecha de pago del año seleccionado.', 'error');
     if (!concepto) return toast('Indique el concepto del bono.', 'error');
     const items = [];
     let hayUSD = false;
@@ -379,7 +430,7 @@ function wireNuevo(root, rerender) {
     if (!items.length) return toast('Ningún trabajador tiene un monto mayor a cero.', 'error');
 
     const P = paralela();
-    const previo = per === 'otro' ? null : P.pagos.find((p) => p.periodo && p.periodo.mes === mes && p.periodo.quincena === per);
+    const previo = per === 'otro' ? null : pagoPrevio(mes, per);
     const totalBs = items.reduce((a, i) => a + i.montoBs, 0);
     const ok = await confirmDialog({
       title: 'Registrar pago',
@@ -388,6 +439,9 @@ function wireNuevo(root, rerender) {
       confirmLabel: 'Registrar'
     });
     if (!ok) return;
+    if (PERIODOS_ANUALES[per] && pagoPrevio(mes, per) !== previo) {
+      return toast('El historial cambió. Revise la corrida antes de registrarla.', 'error');
+    }
 
     const correlativo = P.pagos.length ? Math.max(...P.pagos.map((p) => p.numero || 0)) + 1 : 1;
     P.pagos.push({
@@ -548,6 +602,15 @@ function wireHistorial(root, rerender) {
 function informesHTML() {
   return `
   <div class="card">
+    <h2>Bono vacacional completo</h2>
+    <div class="desc">Proyección confidencial en USD con el sueldo y la bonificación de ambas quincenas. Incluye el bono oficial registrado para revisar antes de pagar.</div>
+    <div class="grid cols-3">
+      <div class="field"><label for="parVacFecha">Fecha estimada de pago</label><input type="date" id="parVacFecha" value="${todayStr().slice(0, 4)}-12-12"></div>
+      <div class="field" style="align-self:end;"><button class="btn" id="btnParVac">Generar cálculo</button></div>
+    </div>
+    <div id="parVacResultado"></div>
+  </div>
+  <div class="card">
     <h2>Pagos del año mes a mes, en dólares</h2>
     <div class="desc">Todo lo que se pagó en cada mes del año, <b>incluida la nómina paralela</b>: salarial (sueldo) y no salarial (bono de alimentación, bono vacacional, utilidades, liquidaciones y bonos paralelos), con las retenciones, el neto pagado, los aportes patronales y el total por trabajador. Cada pago se convierte a US$ con la tasa BCV de su fecha. Este informe es confidencial: solo se genera desde aquí.</div>
     <div class="grid cols-3">
@@ -558,7 +621,62 @@ function informesHTML() {
   </div>`;
 }
 
+export function construirBonoVacacionalCompleto(fecha, tasa = tasaEnFecha(fecha)) {
+  if (!(tasa > 0)) throw new Error('Falta una tasa para convertir los montos a dólares.');
+  const ano = fecha.slice(0, 4);
+  const baseSalarial = `${ano}-11-30`;
+  const tasaSalarial = tasaEnFecha(baseSalarial);
+  if (!(tasaSalarial > 0)) throw new Error('Falta una tasa para convertir el sueldo de noviembre.');
+  const bonos = paralela().bonos;
+  const csvHeaders = ['Trabajador', 'Año de servicio', 'Días de bono', 'Sueldo mensual USD', 'Paralela mensual USD', 'Bono sobre sueldo USD', 'Complemento paralelo USD', 'Bono completo USD', 'Bono oficial registrado en el año (Bs.)'];
+  const centavos = (monto) => Math.round((monto + Number.EPSILON) * 100) / 100;
+  const totales = [0, 0, 0, 0];
+  const complementos = new Map();
+  const csvRows = state.EMPLEADOS.filter((emp) => estadoDe(emp) === 'activo' && emp.fechaIngreso && emp.fechaIngreso <= fecha).map((emp) => {
+    const anos = antiguedad(emp.fechaIngreso, fecha).anos;
+    const aniversario = `${ano}${emp.fechaIngreso.slice(4)}`;
+    const dias = anos > 0 && aniversario <= fecha ? diasBonoVacPorAno(anos) : 0;
+    const sueldo = salarioVigente(emp, baseSalarial) / tasaSalarial;
+    const bono = bonos[emp.id] || {};
+    const mensual = ((Number(bono.q1) || 0) + (Number(bono.q2) || 0)) / (bono.moneda === 'USD' ? 1 : tasa);
+    const oficial = centavos(sueldo * dias / 30);
+    const complemento = centavos(mensual * dias / 30);
+    const completo = centavos(oficial + complemento);
+    if (dias > 0) complementos.set(emp.id, complemento);
+    const registrado = centavos(state.BONO_VAC_PAGADO
+      .filter((pago) => pago.empId === emp.id && pago.fecha?.slice(0, 4) === ano)
+      .reduce((total, pago) => total + (Number(pago.monto) || 0), 0));
+    [oficial, complemento, completo, registrado].forEach((monto, i) => { totales[i] += monto; });
+    return [emp.nombre, dias ? anos : '—', dias, centavos(sueldo), centavos(mensual), oficial, complemento, completo, registrado];
+  });
+  const celdas = (fila) => fila.map((valor, i) => `<td>${i >= 3 ? fmtNum(valor, 2) : esc(valor)}</td>`).join('');
+  const contenidoHtml = `
+    <h2>Bono vacacional ${ano} · Confidencial</h2>
+    <p>Pago estimado el ${fmtDate(fecha)}. Días del período de servicio cumplido en el año, calculados con el sueldo de noviembre y la suma de los bonos quincenales configurados en la paralela. Cada base mensual se divide entre 30 y se multiplica por los días de bono.</p>
+    <p>El bono oficial registrado en el año se muestra en bolívares como referencia para conciliar. El complemento paralelo es únicamente la parte calculada sobre las dos bonificaciones quincenales.</p>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr>${csvHeaders.map((titulo) => `<th>${esc(titulo)}</th>`).join('')}</tr></thead>
+      <tbody>${csvRows.map((fila) => `<tr>${celdas(fila)}</tr>`).join('')}</tbody>
+      <tfoot><tr><th colspan="5">Total</th>${totales.map((monto) => `<th>${fmtNum(monto, 2)}</th>`).join('')}</tr></tfoot>
+    </table></div>`;
+  return { contenidoHtml, csvHeaders, csvRows, complementos };
+}
+
 function wireInformes(root) {
+  root.querySelector('#btnParVac').addEventListener('click', () => {
+    const fecha = root.querySelector('#parVacFecha').value;
+    const cont = root.querySelector('#parVacResultado');
+    cont.replaceChildren();
+    if (!fecha || fecha.slice(5, 7) !== '12') return toast('Indique una fecha de pago de diciembre.', 'error');
+    try {
+      const informe = construirBonoVacacionalCompleto(fecha);
+      cont.appendChild(informeConAcciones({
+        ...informe, filename: `bono-vacacional-${fecha}-confidencial.pdf`, pdfTitle: 'Bono vacacional completo'
+      }));
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
   root.querySelector('#btnParInfPagos').addEventListener('click', () => {
     const ano = Number(root.querySelector('#parInfAno').value);
     if (!ano) return toast('Indique el año.', 'error');
