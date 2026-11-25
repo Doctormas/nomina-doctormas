@@ -6,6 +6,7 @@ import { logoHeaderHTML } from './logo.js';
 import { estadoVacaciones, calcularPrestaciones, antiguedad, salarioVigente, diasUtilidadesEmp, cestaticketEmp, islrPorcentajeEmp, calcularDPPMes, calcularParafiscalesMes, calcularParafiscalesPeriodo } from '../lib/calculos.js';
 import { fmt } from './moneda.js';
 import { fmtDate, fmtNum, tablaToCSV } from './formato.js';
+import { puedeVer } from "./auth.js";
 import { downloadCSV } from './csv.js';
 import { toast } from '../components/toast.js';
 
@@ -218,6 +219,7 @@ export function construirInformeNominaMensualHTML(mesISO) {
 // incluirParalela suma los bonos de la nómina paralela (solo si el usuario
 // tiene acceso a esa sección — el llamador decide).
 export function construirInformePagosMensualesUSD(ano, incluirParalela) {
+  incluirParalela = incluirParalela && puedeVer("paralela");
   const MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   const doce = () => new Array(12).fill(0);
   let sinTasa = 0;
@@ -230,7 +232,8 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
   const delAno = (fecha) => fecha && fecha.slice(0, 4) === String(ano);
 
   const filas = {
-    sueldo: doce(), bonoAlim: doce(), bonoVac: doce(), utilidades: doce(), liquidaciones: doce(), paralela: doce(),
+    sueldo: doce(), bonoAlim: doce(), bonoVac: doce(), utilidades: doce(), liquidaciones: doce(),
+    paralela: doce(), paralelaVac: doce(), paralelaUtil: doce(), paralelaLiq: doce(),
     ivss: doce(), rpe: doce(), faov: doce(), islr: doce(), incesUtil: doce(), patronal: doce()
   };
   const porTrabajador = new Map(); // clave -> { nombre, cargo, externo, meses[12] }
@@ -267,16 +270,23 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
     filas.utilidades[i] += v; filas.incesUtil[i] += aUSD(u.resultado.incesTrabajador, u.fecha);
     const d = datosEmp(u.empId); sumaTrab(u.empId, d.nombre, d.cargo, false, i, v);
   });
-  state.LIQUIDACIONES.filter((l) => delAno(l.fecha)).forEach((l) => {
-    const v = aUSD(l.resultado.totalGeneral, l.fecha); filas.liquidaciones[mesIdx(l.fecha)] += v;
-    const d = datosEmp(l.empId); sumaTrab(l.empId, d.nombre, d.cargo, false, mesIdx(l.fecha), v);
+  state.LIQUIDACIONES.filter((l) => delAno(l.fechaPago || l.fecha)).forEach((l) => {
+    const fecha = l.fechaPago || l.fecha;
+    const i = mesIdx(fecha);
+    const v = l.montoPagoUSD ?? aUSD(l.resultado.totalGeneral, fecha);
+    filas.liquidaciones[i] += v;
+    const d = datosEmp(l.empId); sumaTrab(l.empId, d.nombre, d.cargo, false, i, v);
   });
   if (incluirParalela && state.PARALELA && Array.isArray(state.PARALELA.pagos)) {
     state.PARALELA.pagos.filter((p) => delAno(p.fecha)).forEach((p) => {
       const i = mesIdx(p.fecha);
+      const periodo = p.periodo?.quincena;
+      const categoria = periodo === 'vacacional' ? filas.paralelaVac
+        : periodo === 'utilidades' ? filas.paralelaUtil
+        : periodo === 'liquidacion' ? filas.paralelaLiq : filas.paralela;
       p.items.forEach((it) => {
         const v = (it.moneda || p.moneda) === 'USD' ? it.monto : aUSD(it.montoBs, p.fecha);
-        filas.paralela[i] += v;
+        categoria[i] += v;
         const per = (state.PARALELA.personas || []).find((x) => x.id === it.empId);
         const emp = state.EMPLEADOS.find((x) => x.id === it.empId);
         const snap = (p.nombres && p.nombres[it.empId]) || {};
@@ -291,7 +301,14 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
   const sumar = (...arrs) => doce().map((_, i) => arrs.reduce((a, arr) => a + arr[i], 0));
   const salarial = filas.sueldo;
   const noSalarial = sumar(filas.bonoAlim, filas.bonoVac, filas.utilidades, filas.liquidaciones);
-  const totalPagado = sumar(salarial, noSalarial, filas.paralela);
+  const conceptosParalela = [
+    ['Nómina', filas.paralela],
+    ['Bono vacacional', filas.paralelaVac],
+    ['Utilidades', filas.paralelaUtil],
+    ["Liquidaciones", filas.paralelaLiq]
+  ];
+  const totalParalela = sumar(...conceptosParalela.map(([, montos]) => montos));
+  const totalPagado = sumar(salarial, noSalarial, totalParalela);
   const retenciones = sumar(filas.ivss, filas.rpe, filas.faov, filas.islr, filas.incesUtil);
   const neto = totalPagado.map((v, i) => v - retenciones[i]);
 
@@ -314,7 +331,7 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
       <style>.nommes table.dn th,.nommes table.dn td{padding:3px 3px;font-size:7.5px;}.nommes table.dn th{font-size:6.5px;}.nommes table.dn td:not(:first-child),.nommes table.dn th:not(:first-child){text-align:right;}</style>
       ${logoHeaderHTML()}
       <h3 style="font-size:1rem;margin-top:0;">${empresaConRif()} — Pagos de ${ano}, mes a mes, en dólares</h3>
-      <div class="legal">Cada pago está convertido a US$ con la tasa BCV de su fecha de pago. Salarial: sueldo. No salarial: bono de alimentación, bono vacacional, utilidades y liquidaciones${incluirParalela ? '; además, los bonos de la nómina paralela' : ''}.${sinTasa ? ` <b>Atención:</b> ${sinTasa} pago(s) sin tasa BCV de su fecha no pudieron convertirse.` : ''}</div>
+      <div class="legal">Los pagos registrados en dólares se muestran en su moneda original. Los montos en bolívares se convierten a US$ con la tasa BCV de la fecha de pago. Salarial: sueldo. No salarial: bono de alimentación, bono vacacional, utilidades y liquidaciones${incluirParalela ? '; además, los bonos de la nómina paralela' : ''}.${sinTasa ? ` <b>Atención:</b> ${sinTasa} pago(s) sin tasa BCV de su fecha no pudieron convertirse.` : ''}</div>
 
       <table class="dn" style="margin-top:10px;">
         <thead>${cabecera}</thead>
@@ -328,7 +345,7 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
           ${filaHtml('Utilidades', filas.utilidades, false, true)}
           ${filaHtml('Liquidaciones (prestaciones, vacaciones, etc.)', filas.liquidaciones, false, true)}
           ${filaHtml('Total no salarial', noSalarial, true)}
-          ${incluirParalela ? seccion('Nómina paralela') + filaHtml('Bonos nómina paralela', filas.paralela, true) : ''}
+          ${incluirParalela ? seccion('Nómina paralela') + conceptosParalela.map(([nombre, montos]) => filaHtml(nombre, montos, false, true)).join('') + filaHtml('Total nómina paralela', totalParalela, true) : ''}
           ${filaHtml('TOTAL PAGADO (bruto)', totalPagado, true)}
           ${seccion('Retenciones al trabajador (incluidas arriba)')}
           ${filaHtml('IVSS', filas.ivss, false, true)}
@@ -357,7 +374,7 @@ export function construirInformePagosMensualesUSD(ano, incluirParalela) {
   const csvRows = [
     lin('Sueldo (salarial)', filas.sueldo), lin('Bono de alimentación', filas.bonoAlim), lin('Bono vacacional', filas.bonoVac),
     lin('Utilidades', filas.utilidades), lin('Liquidaciones', filas.liquidaciones),
-    ...(incluirParalela ? [lin('Bonos nómina paralela', filas.paralela)] : []),
+    ...(incluirParalela ? [...conceptosParalela.map(([nombre, montos]) => lin('Paralela · ' + nombre, montos)), lin('Total nómina paralela', totalParalela)] : []),
     lin('TOTAL PAGADO (bruto)', totalPagado), lin('IVSS', filas.ivss), lin('RPE', filas.rpe), lin('FAOV', filas.faov), lin('ISLR', filas.islr),
     lin('INCES utilidades', filas.incesUtil), lin('NETO PAGADO', neto), lin('Aportes patronales', filas.patronal),
     ['', ...MES.map(() => ''), ''],

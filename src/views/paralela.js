@@ -263,11 +263,11 @@ export function calcularUtilidadesParalelas(ano) {
 }
 
 function nuevoHTML() {
-  const emps = empleadosPagables();
+  const emps = [...empleadosPagables(), ...state.EMPLEADOS.filter((e) => estadoDe(e) === 'egresado')];
   const hoy = todayStr();
   const mes = hoy.slice(0, 7);
   const q = Number(hoy.slice(8, 10)) <= 15 ? 'q1' : 'q2';
-  const filas = emps.map((e) => `<tr data-emp="${e.id}">
+  const filas = emps.map((e) => `<tr data-emp="${e.id}" data-egreso="${esc(e.egreso?.fecha || (estadoDe(e) === 'egresado' ? 'sin-fecha' : ''))}">
     <td><input type="checkbox" class="parSel" checked></td>
     <td>${esc(e.nombre)}${e.externo ? ' <span class="tag warn">fuera de nómina</span>' : ''}<div class="legal" style="font-size:.72rem;color:var(--charcoal-muted);">${esc(e.cargo || '')}</div></td>
     <td><select class="parMonedaFila"><option value="VES">Bs.</option><option value="USD">USD</option></select></td>
@@ -280,7 +280,7 @@ function nuevoHTML() {
     <div class="grid cols-4">
       <div class="field"><label>Mes</label><input type="month" id="parMes" value="${mes}"></div>
       <div class="field"><label>Período</label>
-        <select id="parQuincena"><option value="q1" ${q === 'q1' ? 'selected' : ''}>1ª quincena</option><option value="q2" ${q === 'q2' ? 'selected' : ''}>2ª quincena</option><option value="vacacional">Bono vacacional</option><option value="utilidades">Utilidades</option><option value="otro">Otro bono (monto libre)</option></select>
+        <select id="parQuincena"><option value="q1" ${q === 'q1' ? 'selected' : ''}>1ª quincena</option><option value="q2" ${q === 'q2' ? 'selected' : ''}>2ª quincena</option><option value="vacacional">Bono vacacional</option><option value="utilidades">Utilidades</option><option value="liquidacion">Liquidación paralela</option><option value="otro">Otro bono (monto libre)</option></select>
       </div>
       <div class="field"><label>Fecha de pago</label><input type="date" id="parFecha" value="${QUINCENAS[q].fecha(mes)}"></div>
       <div class="field"><label>Tasa BCV (Bs. por USD)</label><input type="number" id="parTasa" min="0" step="0.0001" value="${tasaEnFecha(QUINCENAS[q].fecha(mes)) || ''}"></div>
@@ -318,7 +318,7 @@ function wireNuevo(root, rerender) {
   const recalcular = () => {
     let totalBs = 0; let n = 0;
     filas().forEach((tr) => {
-      if (!tr.querySelector('.parSel').checked) return;
+      if (tr.hidden || !tr.querySelector('.parSel').checked) return;
       const m = Number(tr.querySelector('.parMonto').value) || 0;
       if (m <= 0) return;
       n += 1;
@@ -337,6 +337,9 @@ function wireNuevo(root, rerender) {
       q('#parMes').value = diciembre;
       q('#parFecha').value = diciembre + '-12';
       q('#parConcepto').value = `${PERIODOS_ANUALES[per]} ${mes.slice(0, 4)}`;
+    } else if (per === 'liquidacion') {
+      q('#parFecha').value = '';
+      q('#parConcepto').value = 'Complemento de liquidación';
     } else if (QUINCENAS[per]) {
       q('#parFecha').value = QUINCENAS[per].fecha(mes);
       q('#parConcepto').value = `Bono ${QUINCENAS[per].label} de ${mesTexto(mes)}`;
@@ -356,7 +359,14 @@ function wireNuevo(root, rerender) {
     }
     if (per === 'utilidades') complementos = calcularUtilidadesParalelas(mes.slice(0, 4));
     filas().forEach((tr) => {
-      tr.hidden = Boolean(PERIODOS_ANUALES[per]) && !complementos.has(tr.dataset.emp);
+      tr.hidden = per === 'liquidacion' ? !tr.dataset.egreso
+        : Boolean(tr.dataset.egreso) || (Boolean(PERIODOS_ANUALES[per]) && !complementos.has(tr.dataset.emp));
+      if (tr.hidden || per === 'liquidacion') {
+        tr.querySelector('.parMonto').value = '';
+        tr.querySelector('.parMonedaFila').value = 'USD';
+        tr.querySelector('.parSel').checked = false;
+        return;
+      }
       if (PERIODOS_ANUALES[per]) {
         const calculado = complementos.get(tr.dataset.emp);
         const monto = (per === 'utilidades' ? calculado?.monto : calculado) || 0;
@@ -376,14 +386,16 @@ function wireNuevo(root, rerender) {
       tr.querySelector('.parMonedaFila').value = b && b.moneda === 'USD' ? 'USD' : 'VES';
       tr.querySelector('.parSel').checked = monto > 0;
     });
-    const previo = per === 'otro' ? null : pagoPrevio(mes, per);
+    const previo = ['otro', 'liquidacion'].includes(per) ? null : pagoPrevio(mes, per);
     q('#parAviso').innerHTML = previo
       ? `<span class="tag warn">Ya hay un pago registrado de este período (N° ${previo.numero}, ${fmtDate(previo.fecha)}).</span>`
       : per === 'vacacional'
         ? 'La corrida incluye el complemento paralelo. El bono sobre sueldo se consulta en Informes.'
         : per === 'utilidades'
           ? 'Complemento sobre los bonos paralelos, proporcional a los meses completos de servicio hasta el 31 de diciembre.'
-          : '';
+          : per === 'liquidacion'
+            ? 'Marque al egresado e ingrese solo el adicional. Use la fecha real de pago.'
+            : '';
     recalcular();
   };
 
@@ -419,7 +431,7 @@ function wireNuevo(root, rerender) {
     const items = [];
     let hayUSD = false;
     filas().forEach((tr) => {
-      if (!tr.querySelector('.parSel').checked) return;
+      if (tr.hidden || !tr.querySelector('.parSel').checked) return;
       const monto = Number(tr.querySelector('.parMonto').value) || 0;
       if (monto <= 0) return;
       const moneda = tr.querySelector('.parMonedaFila').value;
@@ -430,7 +442,9 @@ function wireNuevo(root, rerender) {
     if (!items.length) return toast('Ningún trabajador tiene un monto mayor a cero.', 'error');
 
     const P = paralela();
-    const previo = per === 'otro' ? null : pagoPrevio(mes, per);
+    const previo = per === 'liquidacion'
+      ? P.pagos.find((p) => p.periodo?.quincena === per && p.fecha === fecha && p.items.some((i) => items.some((item) => item.empId === i.empId)))
+      : per === 'otro' ? null : pagoPrevio(mes, per);
     const totalBs = items.reduce((a, i) => a + i.montoBs, 0);
     const ok = await confirmDialog({
       title: 'Registrar pago',
@@ -446,7 +460,7 @@ function wireNuevo(root, rerender) {
     const correlativo = P.pagos.length ? Math.max(...P.pagos.map((p) => p.numero || 0)) + 1 : 1;
     P.pagos.push({
       id: uid(), numero: correlativo, fecha, concepto, tasa: t,
-      periodo: per === 'otro' ? null : { mes, quincena: per },
+      periodo: per === 'otro' ? null : { mes: per === 'liquidacion' ? fecha.slice(0, 7) : mes, quincena: per },
       nota: q('#parNota').value.trim(), items,
       // Copia del nombre/cédula: el recibo no cambia si luego se edita la ficha.
       nombres: Object.fromEntries(items.map((i) => {

@@ -67,7 +67,7 @@ function historialHTML() {
   const rows = state.LIQUIDACIONES.slice().reverse().slice(0, 30).map((l) => {
     const emp = state.EMPLEADOS.find((e) => e.id === l.empId);
     return `<tr>
-      <td>${emp ? emp.nombre : '—'}</td><td>${fmtDate(l.fecha)}</td><td>${CAUSA_LABELS[l.causa] || l.causa}</td><td><b>${fmt(l.resultado.totalGeneral, l.fecha)}</b></td>
+      <td>${emp ? emp.nombre : '—'}</td><td>${fmtDate(l.fecha)}</td><td>${l.fechaPago ? fmtDate(l.fechaPago) : '—'}</td><td>${CAUSA_LABELS[l.causa] || l.causa}</td><td><b>${fmt(l.resultado.totalGeneral, l.fecha)}</b></td>
       <td class="row-actions"><div class="row-actions-inner">
         <button type="button" class="btn ghost small icon-only" data-descargar-liq="${l.id}" title="Descargar PDF">⬇</button>
         <button type="button" class="btn danger ghost small icon-only" data-eliminar-liq="${l.id}" title="Quitar">✕</button>
@@ -78,8 +78,8 @@ function historialHTML() {
   <div class="card">
     <h2>Historial de liquidaciones guardadas</h2>
     <div class="desc">Liquidaciones calculadas y guardadas desde el segmento "Calcular". Descargue de nuevo el PDF de cualquiera de ellas cuando lo necesite.</div>
-    <div class="table-wrap"><table><thead><tr><th>Empleado</th><th>Fecha de egreso</th><th>Causa</th><th>Total liquidación</th><th></th></tr></thead>
-    <tbody>${rows || '<tr class="empty-row"><td colspan="5">Sin liquidaciones guardadas aún.</td></tr>'}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Empleado</th><th>Fecha de egreso</th><th>Fecha de pago</th><th>Causa</th><th>Total liquidación</th><th></th></tr></thead>
+    <tbody>${rows || '<tr class="empty-row"><td colspan="6">Sin liquidaciones guardadas aún.</td></tr>'}</tbody></table></div>
   </div>`;
 }
 
